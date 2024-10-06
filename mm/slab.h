@@ -483,6 +483,9 @@ void __kmem_cache_release(struct kmem_cache *);
 int __kmem_cache_shrink(struct kmem_cache *);
 void slab_kmem_cache_release(struct kmem_cache *);
 
+extern unsigned int kmem_cache_size(struct kmem_cache *s);
+
+
 struct seq_file;
 struct file;
 
