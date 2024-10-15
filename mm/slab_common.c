@@ -107,34 +107,34 @@ static inline int kmem_cache_sanity_check(const char *name, unsigned int size)
 }
 #endif
 
-/*
- * Figure out what the alignment of the objects will be given a set of
- * flags, a user specified alignment and the size of the objects.
- */
-static unsigned int calculate_alignment(slab_flags_t flags,
-		unsigned int align, unsigned int size)
-{
-	/*
-	 * If the user wants hardware cache aligned objects then follow that
-	 * suggestion if the object is sufficiently large.
-	 *
-	 * The hardware cache alignment cannot override the specified
-	 * alignment though. If that is greater then use it.
-	 */
-	if (flags & SLAB_HWCACHE_ALIGN) {
-		unsigned int ralign;
+// /*
+//  * Figure out what the alignment of the objects will be given a set of
+//  * flags, a user specified alignment and the size of the objects.
+//  */
+// static unsigned int calculate_alignment(slab_flags_t flags,
+// 		unsigned int align, unsigned int size)
+// {
+// 	/*
+// 	 * If the user wants hardware cache aligned objects then follow that
+// 	 * suggestion if the object is sufficiently large.
+// 	 *
+// 	 * The hardware cache alignment cannot override the specified
+// 	 * alignment though. If that is greater then use it.
+// 	 */
+// 	if (flags & SLAB_HWCACHE_ALIGN) {
+// 		unsigned int ralign;
 
-		ralign = cache_line_size();
-		while (size <= ralign / 2)
-			ralign /= 2;
-		align = max(align, ralign);
-	}
+// 		ralign = cache_line_size();
+// 		while (size <= ralign / 2)
+// 			ralign /= 2;
+// 		align = max(align, ralign);
+// 	}
 
-	align = max(align, arch_slab_minalign());
+// 	align = max(align, arch_slab_minalign());
 
-	return ALIGN(align, sizeof(void *));
-}
-
+// 	return ALIGN(align, sizeof(void *));
+// }
+EXPORT_SYMBOL(calculate_alignment);
 /*
  * Find a mergeable slab cache
  */
