@@ -68,10 +68,7 @@ fn align_macro<T: Copy + From<u8> + core::ops::Add<Output = T> + core::ops::BitA
 }
 
 /**************************** BEGIN FUNCTION DEFINITIONS ********************************/
-extern "C" {
-    fn cache_line_size() -> u32;
-    fn arch_slab_minalign() -> u32;
-}
+
 /*
  * Figure out what the alignment of the objects will be given a set of
  * flags, a user specified alignment and the size of the objects.
@@ -88,18 +85,16 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     */
     // Need to figure out what to do with all the stupid define flags
     //if flags & SLAB_HWCACHE_ALIGN {
-    unsafe {
-        let mut ralign = cache_line_size();
+        let mut ralign = 128;
         while size <= ralign / 2 {
             ralign /= 2;
         }
         let mut align = core::cmp::max(align, ralign);
     //}
 
-    align = core::cmp::max(align, arch_slab_minalign());
+    align = core::cmp::max(align, core::mem::align_of::<u64>() as u32);
     align = align_macro(align, core::mem::size_of::<*const ()>() as u32);
     align
-    }
 }
 
 // Ported function to Rust
