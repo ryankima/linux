@@ -17,7 +17,9 @@
  */
 
 #ifdef CONFIG_64BIT
+#pragma message "CONFIG_64BIT"
 # ifdef system_has_cmpxchg128
+#pragma message "system_has_cmpxchg128"
 # define system_has_freelist_aba()	system_has_cmpxchg128()
 # define try_cmpxchg_freelist		try_cmpxchg128
 # endif
@@ -25,10 +27,12 @@
 typedef u128 freelist_full_t;
 #else /* CONFIG_64BIT */
 # ifdef system_has_cmpxchg64
+#pragma message "system_has_cmpxchg64"
 # define system_has_freelist_aba()	system_has_cmpxchg64()
 # define try_cmpxchg_freelist		try_cmpxchg64
 # endif
 #define this_cpu_try_cmpxchg_freelist	this_cpu_try_cmpxchg64
+#pragma message "this_cpu_try_cmpxchg_freelist"
 typedef u64 freelist_full_t;
 #endif /* CONFIG_64BIT */
 
@@ -58,6 +62,8 @@ struct slab {
 			union {
 				struct list_head slab_list;
 #ifdef CONFIG_SLUB_CPU_PARTIAL
+#pragma message "CONFIG_SLUB_CPU_PARTIAL"
+
 				struct {
 					struct slab *next;
 					int slabs;	/* Nr of slabs left */
@@ -78,6 +84,7 @@ struct slab {
 					};
 				};
 #ifdef system_has_freelist_aba
+#pragma message "system_has_freelist_aba"
 				freelist_aba_t freelist_counter;
 #endif
 			};
@@ -88,6 +95,8 @@ struct slab {
 	unsigned int __page_type;
 	atomic_t __page_refcount;
 #ifdef CONFIG_SLAB_OBJ_EXT
+#pragma message "CONFIG_SLAB_OBJ_EXT"
+
 	unsigned long obj_exts;
 #endif
 };
@@ -222,6 +231,8 @@ static inline size_t slab_size(const struct slab *slab)
 }
 
 #ifdef CONFIG_SLUB_CPU_PARTIAL
+#pragma message "CONFIG_SLUB_CPU_PARTIAL"
+
 #define slub_percpu_partial(c)			((c)->partial)
 
 #define slub_set_percpu_partial(c, p)		\
@@ -250,8 +261,10 @@ struct kmem_cache_order_objects {
 /*
  * Slab cache management.
  */
+ #pragma message "Begin Kmem Cache"
 struct kmem_cache {
 #ifndef CONFIG_SLUB_TINY
+#pragma message "Not CONFIG_SLUB_TINY"
 	struct kmem_cache_cpu __percpu *cpu_slab;
 #endif
 	/* Used for retrieving partial slabs, etc. */
@@ -262,6 +275,7 @@ struct kmem_cache {
 	struct reciprocal_value reciprocal_size;
 	unsigned int offset;		/* Free pointer offset */
 #ifdef CONFIG_SLUB_CPU_PARTIAL
+#pragma message "CONFIG_SLUB_CPU_PARTIAL"
 	/* Number of per cpu partial objects to keep around */
 	unsigned int cpu_partial;
 	/* Number of per cpu partial slabs to keep around */
@@ -280,13 +294,16 @@ struct kmem_cache {
 	const char *name;		/* Name (only for display!) */
 	struct list_head list;		/* List of slab caches */
 #ifdef CONFIG_SYSFS
+#pragma message "CONFIG_SYSFS"
 	struct kobject kobj;		/* For sysfs */
 #endif
 #ifdef CONFIG_SLAB_FREELIST_HARDENED
+#pragma message "CONFIG_SLAB_FREELIST_HARDENED"
 	unsigned long random;
 #endif
 
 #ifdef CONFIG_NUMA
+#pragma message "CONFIG_NUMA"
 	/*
 	 * Defragmentation by allocating from a remote node.
 	 */
@@ -294,23 +311,29 @@ struct kmem_cache {
 #endif
 
 #ifdef CONFIG_SLAB_FREELIST_RANDOM
+#pragma message "CONFIG_SLAB_FREELIST_RANDOM"
 	unsigned int *random_seq;
 #endif
 
 #ifdef CONFIG_KASAN_GENERIC
+#pragma message "CONFIG_KASAN_GENERIC"
 	struct kasan_cache kasan_info;
 #endif
 
 #ifdef CONFIG_HARDENED_USERCOPY
+#pragma message "CONFIG_HARDENED_USERCOPY"
 	unsigned int useroffset;	/* Usercopy region offset */
 	unsigned int usersize;		/* Usercopy region size */
 #endif
 
 	struct kmem_cache_node *node[MAX_NUMNODES];
 };
+ #pragma message "End Kmem Cache"
 
 #if defined(CONFIG_SYSFS) && !defined(CONFIG_SLUB_TINY)
 #define SLAB_SUPPORTS_SYSFS
+#pragma message "SLAB_SUPPORTS_SYSFS"
+
 void sysfs_slab_unlink(struct kmem_cache *s);
 void sysfs_slab_release(struct kmem_cache *s);
 #else
@@ -449,6 +472,7 @@ static inline bool is_kmalloc_cache(struct kmem_cache *s)
 			 SLAB_TYPESAFE_BY_RCU | SLAB_DEBUG_OBJECTS )
 
 #ifdef CONFIG_SLUB_DEBUG
+#pragma message "CONFIG_SLUB_DEBUG"
 #define SLAB_DEBUG_FLAGS (SLAB_RED_ZONE | SLAB_POISON | SLAB_STORE_USER | \
 			  SLAB_TRACE | SLAB_CONSISTENCY_CHECKS)
 #else
@@ -667,6 +691,7 @@ static inline void debugfs_slab_release(struct kmem_cache *s) { }
 #endif
 
 #ifdef CONFIG_PRINTK
+#pragma message "CONFIG_PRINTK"
 #define KS_ADDRS_COUNT 16
 struct kmem_obj_info {
 	void *kp_ptr;
