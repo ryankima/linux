@@ -1,58 +1,35 @@
 #![no_std]
+/**************************** BEGIN STRUCT DEFINITIONS ********************************/
+
 /**************************** BEGIN TYPE DEFINITIONS ********************************/
 type slab_flags_t = u32;
 
-#[repr(C)]
-pub struct kmem_cache {
-    //#[cfg(not(feature = "slub_tiny"))]
-    //cpu_slab: *mut KmemCacheCpu, // Raw pointer to per-cpu slab
-
-    //flags: SlabFlags,             // slab_flags_t equivalent
-    min_partial: u64,             // unsigned long -> u64 or usize
-    size: u32,                    // unsigned int -> u32
-    object_size: u32,             // unsigned int -> u32
-    //reciprocal_size: ReciprocalValue,
-    offset: u32,                  // unsigned int -> u32
-
-    #[cfg(feature = "slub_cpu_partial")]
-    cpu_partial: u32,             // unsigned int -> u32
-    #[cfg(feature = "slub_cpu_partial")]
-    cpu_partial_slabs: u32,       // unsigned int -> u32
-
-    //oo: KmemCacheOrderObjects,
-    //min: KmemCacheOrderObjects,
-    //allocflags: GfpFlags,         // gfp_t equivalent in Rust
-    refcount: i32,                // int -> i32
-    ctor: Option<unsafe extern "C" fn(*mut core::ffi::c_void)>,  // Function pointer
-    inuse: u32,
-    align: u32,
-    red_left_pad: u32,
-
-    name: *const core::ffi::c_char,  // const char * -> C-compatible string pointer
-    //list: ListHead,                // struct list_head equivalent in Rust
-
-    #[cfg(feature = "sysfs")]
-    kobj: Kobject,                // struct kobject equivalent
-
-    #[cfg(feature = "slab_freelist_hardened")]
-    random: u64,                  // unsigned long -> u64 or usize
-
-    #[cfg(feature = "numa")]
-    remote_node_defrag_ratio: u32, // unsigned int -> u32
-
-    #[cfg(feature = "slab_freelist_random")]
-    random_seq: *mut u32,         // unsigned int * -> raw pointer to u32
-
-    #[cfg(feature = "kasan_generic")]
-    kasan_info: KasanCache,       // struct kasan_cache equivalent
-
-    #[cfg(feature = "hardened_usercopy")]
-    useroffset: u32,              // unsigned int -> u32
-    #[cfg(feature = "hardened_usercopy")]
-    usersize: u32,                // unsigned int -> u32
-
-    //node: [*mut KmemCacheNode; MAX_NUMNODES], // Array of raw pointers to node structures
+// This comes from <linux/slab.h>
+enum _slab_flag_bits {
+	_SLAB_CONSISTENCY_CHECKS,
+	_SLAB_RED_ZONE,
+	_SLAB_POISON,
+	_SLAB_KMALLOC,
+	_SLAB_HWCACHE_ALIGN,
+	_SLAB_CACHE_DMA,
+	_SLAB_CACHE_DMA32,
+	_SLAB_STORE_USER,
+	_SLAB_PANIC,
+	_SLAB_TYPESAFE_BY_RCU,
+	_SLAB_TRACE,
+	_SLAB_NOLEAKTRACE,
+	_SLAB_NO_MERGE,
+	_SLAB_ACCOUNT,
+	_SLAB_NO_USER_FLAGS,
+	_SLAB_SKIP_KFENCE,
+	_SLAB_RECLAIM_ACCOUNT,
+	_SLAB_OBJECT_POISON,
+	_SLAB_CMPXCHG_DOUBLE,
+	_SLAB_NO_OBJ_EXT,
+	_SLAB_FLAGS_LAST_BIT
 }
+
+const SLAB_HWCACHE_ALIGN: u32 = 1 << (_slab_flag_bits::_SLAB_HWCACHE_ALIGN as u32);
 
 /**************************** BEGIN MACRO DEFINITIONS ********************************/
 
@@ -75,7 +52,7 @@ fn align_macro<T: Copy + From<u8> + core::ops::Add<Output = T> + core::ops::BitA
  */
 #[no_mangle]
 pub extern "C" fn calculate_alignment(flags: slab_flags_t,
-    align: u32, size: u32) -> u32 {
+    mut align: u32, size: u32) -> u32 {
     /*
     * If the user wants hardware cache aligned objects then follow that
     * suggestion if the object is sufficiently large.
@@ -83,22 +60,21 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     * The hardware cache alignment cannot override the specified
     * alignment though. If that is greater then use it.
     */
-    // Need to figure out what to do with all the stupid define flags
-    //if flags & SLAB_HWCACHE_ALIGN {
+    if flags & SLAB_HWCACHE_ALIGN != 0{
         let mut ralign = 128;
         while size <= ralign / 2 {
             ralign /= 2;
         }
-        let mut align = core::cmp::max(align, ralign);
-    //}
+        align = core::cmp::max(align, ralign);
+    }
 
     align = core::cmp::max(align, core::mem::align_of::<u64>() as u32);
     align = align_macro(align, core::mem::size_of::<*const ()>() as u32);
     align
 }
 
-// Ported function to Rust
 #[no_mangle]
-pub extern "C" fn kmem_cache_size(s: &kmem_cache) -> u32 {
-    s.object_size
+pub extern "C" fn kmem_cache_size(s: &bindings::kmem_cache) -> u32 {
+    //s.object_size
+    0
 }
