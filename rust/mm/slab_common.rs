@@ -1,4 +1,10 @@
+#![no_std]
+
 use core::ffi::{c_void, c_char};
+use core::marker::Copy;
+use core::convert::From;
+
+use bindings;
 
 /**************************** BEGIN DEFINES DEFINITIONS ********************************/
 const CONFIG_64BIT: bool = true;
@@ -15,6 +21,7 @@ const CONFIG_HARDENED_USERCOPY: bool = true;
 const SLAB_SUPPORTS_SYSFS: bool = true;
 const CONFIG_SLUB_DEBUG: bool = true;
 const CONFIG_PRINTK: bool = true;
+const MAX_NUMNODES: u32 = 16;
 
 /**************************** BEGIN TYPE DEFINITIONS ********************************/
 #[allow(non_camel_case_types)]
@@ -36,7 +43,37 @@ type gfp_t = Gfp;
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-struct kmem_cache {
+pub struct reciprocal_value {
+    m: u32,
+    sh1: u8,
+    sh2: u8
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct kmem_cache_order_objects {
+    x: u32
+}
+
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+struct kmem_cache_node {
+    list_lock: bindings::spinlock_t,
+    nr_partial: u64,
+    partial: bindings::list_head
+    /*
+    #ifdef CONFIG_SLUB_DEBUG
+        atomic_long_t nr_slabs;
+        atomic_long_t total_objects;
+        struct list_head full;
+    #endif
+    */
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct kmem_cache {
     //TODO: this __percpu is weird
     //struct kmem_cache_cpu __percpu *cpu_slab,
     /* Used for retrieving partial slabs, etc. */
@@ -45,19 +82,17 @@ struct kmem_cache {
     size: u32,		/* Object size including metadata */
     object_size: u32,	/* Object size without metadata */
 
-    //TODO
-    //struct reciprocal_value reciprocal_size;
+    reciprocal_size: reciprocal_value,
     offset: u32,		/* Free pointer offset */
     /* Number of per cpu partial objects to keep around */
     cpu_partial: u32,
     /* Number of per cpu partial slabs to keep around */
     cpu_partial_slabs: u32,
     //TODO
-    //struct kmem_cache_order_objects oo;
-
+    oo: kmem_cache_order_objects,
     /* Allocation and freeing of slabs */
     //TODO
-    //struct kmem_cache_order_objects min;
+    min: kmem_cache_order_objects,
     allocflags: gfp_t,		/* gfp flags to use on each alloc */
     refcount: i32,			/* Refcount for slab cache destroy */
     ctor: *mut c_void,	/* Object constructor */
@@ -67,8 +102,8 @@ struct kmem_cache {
     name: *const c_char,		/* Name (only for display!) */
 
     //TODO
-    //struct list_head list;		/* List of slab caches */
-    //struct kobject kobj;		/* For sysfs */
+    list: bindings::list_head,  /* List of slab caches */
+    kobj: bindings::kobject,    /* For sysfs */
     random: u64,
 
     /*
@@ -83,6 +118,7 @@ struct kmem_cache {
 
     //TODO
     //struct kmem_cache_node *node[MAX_NUMNODES];
+    node: [*mut kmem_cache_node; MAX_NUMNODES],
 }
 
 
