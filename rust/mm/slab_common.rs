@@ -21,11 +21,13 @@ const CONFIG_HARDENED_USERCOPY: bool = true;
 const SLAB_SUPPORTS_SYSFS: bool = true;
 const CONFIG_SLUB_DEBUG: bool = true;
 const CONFIG_PRINTK: bool = true;
-const MAX_NUMNODES: u32 = 16;
+const MAX_NUMNODES: usize = 16;
+const KS_ADDRS_COUNT: usize = 16;
 
 /**************************** BEGIN TYPE DEFINITIONS ********************************/
 #[allow(non_camel_case_types)]
 type slab_flags_t = u32;
+type freelist_full_t = u64;
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
@@ -58,17 +60,20 @@ pub struct kmem_cache_order_objects {
 
 #[repr(C)]
 #[allow(non_camel_case_types)]
-struct kmem_cache_node {
+pub struct kmem_cache_node {
     list_lock: bindings::spinlock_t,
     nr_partial: u64,
-    partial: bindings::list_head
-    /*
-    #ifdef CONFIG_SLUB_DEBUG
-        atomic_long_t nr_slabs;
-        atomic_long_t total_objects;
-        struct list_head full;
-    #endif
-    */
+    partial: bindings::list_head,
+
+    nr_slabs: bindings::atomic_long_t,
+    total_objects: bindings::atomic_long_t,
+    full: bindings::list_head,
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct kmem_cache_cpu {
+    _unused: [u8; 0],
 }
 
 #[repr(C)]
@@ -76,6 +81,7 @@ struct kmem_cache_node {
 pub struct kmem_cache {
     //TODO: this __percpu is weird
     //struct kmem_cache_cpu __percpu *cpu_slab,
+    cpu_slab: *mut kmem_cache_cpu,
     /* Used for retrieving partial slabs, etc. */
     flags: slab_flags_t,
     min_partial: u64,
@@ -88,10 +94,8 @@ pub struct kmem_cache {
     cpu_partial: u32,
     /* Number of per cpu partial slabs to keep around */
     cpu_partial_slabs: u32,
-    //TODO
     oo: kmem_cache_order_objects,
     /* Allocation and freeing of slabs */
-    //TODO
     min: kmem_cache_order_objects,
     allocflags: gfp_t,		/* gfp flags to use on each alloc */
     refcount: i32,			/* Refcount for slab cache destroy */
@@ -101,7 +105,6 @@ pub struct kmem_cache {
     red_left_pad: u32,	/* Left redzone padding size */
     name: *const c_char,		/* Name (only for display!) */
 
-    //TODO
     list: bindings::list_head,  /* List of slab caches */
     kobj: bindings::kobject,    /* For sysfs */
     random: u64,
@@ -116,12 +119,102 @@ pub struct kmem_cache {
     useroffset: u32,	/* Usercopy region offset */
     usersize: u32,		/* Usercopy region size */
 
-    //TODO
-    //struct kmem_cache_node *node[MAX_NUMNODES];
+
     node: [*mut kmem_cache_node; MAX_NUMNODES],
 }
 
 
+//Interior components of slab, previously were anonymous components
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone)]
+pub struct slab_member_numbered_list {
+    next: *mut slab,
+    slabs: i32, /* Nr of slabs left */
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone)]
+pub union slab_member_list_type {
+    slab_list: bindings::list_head,
+    slab_list_numbered: slab_member_numbered_list
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone)]
+pub struct slab_freelist_counter {
+    freelist: *mut c_void,
+    counters: u64,
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone)]
+pub union freelist_aba_t {
+    list: slab_freelist_counter,
+    full: freelist_full_t
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone)]
+pub union slab_freelist_counter_union {
+    list: slab_freelist_counter,
+    freelist_counter: freelist_aba_t
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone)]
+pub struct slab_list_and_counter {
+    list: slab_member_list_type,
+    counter: slab_freelist_counter_union
+
+}
+
+//End interior slab components
+#[repr(C)]
+#[allow(non_camel_case_types)]
+#[derive(Copy, Clone)]
+pub struct slab {
+    __page_flags: u64,
+    slab_cache: *mut kmem_cache,
+    slab_list: slab_list_and_counter,   //This is a bunch of nested structs and unions, it might be wrong
+    
+    __page_type: u32,
+    __page_refcount: bindings::atomic_t,
+    obj_exts: u64,
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct slabinfo {
+    active_objs: u64,
+    num_objs: u64,
+    active_slabs: u64,
+    num_slabs: u64,
+    shared_avail: u64,
+    limit: u32,
+    batchcount: u32,
+    shared: u32,
+    objects_per_slab: u32,
+    cache_order: u32,
+}
+
+#[repr(C)]
+#[allow(non_camel_case_types)]
+pub struct kmem_object_info {
+    kp_ptr: *mut c_void,
+    kp_slab: *mut slab,
+    kp_objp: *mut void,
+    kp_data_offset: u64,
+    kp_slab_cache: *mut kmem_cache,
+    kp_ret: *mut c_void,
+    kp_stack: [*mut c_void; KS_ADDRS_COUNT],
+    kp_free_stack: [*mut c_void; KS_ADDRS_COUNT],
+}
 
 // This comes from <linux/slab.h>
 #[allow(non_camel_case_types)]
