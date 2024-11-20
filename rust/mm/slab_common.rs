@@ -24,6 +24,41 @@ const CONFIG_PRINTK: bool = true;
 const MAX_NUMNODES: usize = 16;
 const KS_ADDRS_COUNT: usize = 16;
 
+const EPERM: u32 =		 1;	/* Operation not permitted */
+const ENOENT: u32 =		 2;	/* No such file or directory */
+const ESRCH: u32 =		 3;	/* No such process */
+const EINTR: u32 =		 4;	/* Interrupted system call */
+const EIO: u32 =		 5;	/* I/O error */
+const ENXIO: u32 =		 6;	/* No such device or address */
+const E2BIG: u32 =	     7;	/* Argument list too long */
+const ENOEXEC: u32 =	 8;	/* Exec format error */
+const EBADF: u32 =		 9;	/* Bad file number */
+const ECHILD: u32 =		10;	/* No child processes */
+const EAGAIN: u32 =		11;	/* Try again */
+const ENOMEM: u32 =		12;	/* Out of memory */
+const EACCES: u32 =		13;	/* Permission denied */
+const EFAULT: u32 =		14;	/* Bad address */
+const ENOTBLK: u32 =	15;	/* Block device required */
+const EBUSY: u32 =		16;	/* Device or resource busy */
+const EEXIST: u32 =		17;	/* File exists */
+const EXDEV: u32 =		18;	/* Cross-device link */
+const ENODEV: u32 =		19;	/* No such device */
+const ENOTDIR: u32 =	20;	/* Not a directory */
+const EISDIR: u32 =		21;	/* Is a directory */
+const EINVAL: u32 =		22;	/* Invalid argument */
+const ENFILE: u32 =		23;	/* File table overflow */
+const EMFILE: u32 =		24;	/* Too many open files */
+const ENOTTY: u32 =		25;	/* Not a typewriter */
+const ETXTBSY: u32 =	26;	/* Text file busy */
+const EFBIG: u32 =		27;	/* File too large */
+const ENOSPC: u32 =		28;	/* No space left on device */
+const ESPIPE: u32 =		29;	/* Illegal seek */
+const EROFS: u32 =		30;	/* Read-only file system */
+const EMLINK: u32 =		31;	/* Too many links */
+const EPIPE: u32 =		32;	/* Broken pipe */
+const EDOM: u32 =		33;	/* Math argument out of domain of func */
+const ERANGE: u32 =		34;	/* Math result not representable */
+
 /**************************** BEGIN TYPE DEFINITIONS ********************************/
 #[allow(non_camel_case_types)]
 type slab_flags_t = u32;
@@ -208,7 +243,7 @@ pub struct slabinfo {
 pub struct kmem_object_info {
     kp_ptr: *mut c_void,
     kp_slab: *mut slab,
-    kp_objp: *mut void,
+    kp_objp: *mut c_void,
     kp_data_offset: u64,
     kp_slab_cache: *mut kmem_cache,
     kp_ret: *mut c_void,
@@ -252,10 +287,18 @@ const SLAB_TRACE: u32 = 1 << (_slab_flag_bits::_SLAB_TRACE as u32);
 const SLAB_TYPESAFE_BY_RCU: u32 = 1 << (_slab_flag_bits::_SLAB_TYPESAFE_BY_RCU as u32);
 const SLAB_NOLEAKTRACE: u32 = 1 << (_slab_flag_bits::_SLAB_NOLEAKTRACE as u32);
 const SLAB_NO_MERGE: u32 = 1 << (_slab_flag_bits::_SLAB_NO_MERGE as u32);
+const SLAB_RECLAIM_ACCOUNT: u32 = 1 << (_slab_flag_bits::_SLAB_RECLAIM_ACCOUNT as u32);
+const SLAB_CACHE_DMA: u32 = 1 << (_slab_flag_bits::_SLAB_CACHE_DMA as u32);
+const SLAB_CACHE_DMA32: u32 = 1 << (_slab_flag_bits::_SLAB_CACHE_DMA32 as u32);
+const SLAB_ACCOUNT: u32 = 1 << (_slab_flag_bits::_SLAB_ACCOUNT as u32);
+
 
 const SLAB_NEVER_MERGE: u32 = SLAB_RED_ZONE | SLAB_POISON | SLAB_STORE_USER |
                                 SLAB_TRACE | SLAB_TYPESAFE_BY_RCU | SLAB_NOLEAKTRACE |
                                  SLAB_NO_MERGE;
+
+const SLAB_MERGE_SAME: u32 =  SLAB_RECLAIM_ACCOUNT | SLAB_CACHE_DMA | 
+                                SLAB_CACHE_DMA32 | SLAB_ACCOUNT;
 
 /**************************** BEGIN MACRO DEFINITIONS ********************************/
 
@@ -332,11 +375,19 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     return 0;
  }
 
+ extern "C" {
+    pub static slab_caches: bindings::LIST_HEAD;
+    pub static kmem_cache_obj: *mut kmem_cache;
+    pub fn kmem_cache_alloc_noprof(cachep: *mut kmem_cache, flags: gfp_t) -> *mut core::ffi::c_void;
+    pub fn __kmem_cache_create(cache: *mut kmem_cache, flags: slab_flags_t) -> u32;
+    pub fn kmem_cache_free(s: *mut kmem_cache, objp: *const c_void);
+
+}
+
 #[no_mangle]
 pub extern "C" fn find_mergeable(size: u32, mut align: u32, mut flags: slab_flags_t,
                                  name: *const c_char, ctor: *const c_void) -> *mut kmem_cache
 {
-    //struct kmem_cache *s;
 
     if slab_nomerge {
         return core::ptr::null_mut();
@@ -355,73 +406,95 @@ pub extern "C" fn find_mergeable(size: u32, mut align: u32, mut flags: slab_flag
     if flags & SLAB_NEVER_MERGE != 0 {
         return core::ptr::null_mut();
     }
-/*
-list_for_each_entry_reverse(s, &slab_caches, list) {
-    if (slab_unmergeable(s))
-        continue;
 
-    if (size > s->size)
-        continue;
+    unsafe {
+        let s: *mut kmem_cache = slab_caches.prev;
+        while s != slab_caches {
+            if slab_unmergeable(s) != 0 {
+                s = s.prev;
+                continue;
+            }
 
-    if ((flags & SLAB_MERGE_SAME) != (s->flags & SLAB_MERGE_SAME))
-        continue;
-    /*
-     * Check if alignment is compatible.
-     * Courtesy of Adrian Drzewiecki
-     */
-    if ((s->size & ~(align - 1)) != s->size)
-        continue;
+            if size > s.size {
+                s = s.prev;
+                continue;
+            }
 
-    if (s->size - size >= sizeof(void *))
-        continue;
+            if (flags & SLAB_MERGE_SAME) != (s.flags & SLAB_MERGE_SAME) {
+                s = s.prev;
+                continue;
+            }
+            /*
+            * Check if alignment is compatible.
+            * Courtesy of Adrian Drzewiecki
+            */
+            if (s.size & !(align - 1)) != s.size {
+                s = s.prev;
+                continue;
+            }
 
-    return s;
-}
-*/
+            if s.size - size >= core::mem::size_of::<*const ()>() as u32 {
+                s = s.prev;
+                continue;
+            }
+
+            s
+        }
+    }
+
     return core::ptr::null_mut();
 }
 
-/*
-fn struct kmem_cache *create_cache(name: *const c_char,
+
+fn create_cache(name: *const c_char,
     object_size: u32, align: u32,
     flags: slab_flags_t, useroffset: u32,
     usersize: u32, ctor: *mut c_void,
     root_cache: *const kmem_cache) -> *mut kmem_cache
 {
-    let mut s: ;
-let mut err: u32;
+    
 
-if (WARN_ON(useroffset + usersize > object_size))
-    useroffset = usersize = 0;
+    /*
+    // This would be annoying to port
+    if (WARN_ON(useroffset + usersize > object_size))
+        useroffset = usersize = 0;
+    */
+    let mut err: u32 = !ENOMEM;
+    // 
+    // #define kmem_cache_alloc(...)			alloc_hooks(kmem_cache_alloc_noprof(__VA_ARGS__))
+    // kmem_cache_alloc(_k, (_flags)|__GFP_ZERO)
+    // The hook is need, but annoyting see <linux/alloc_tag.h>
+    unsafe {
+        let s: *mut kmem_cache = kmem_cache_alloc_noprof(kmem_cache_obj, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
 
-err = -ENOMEM;
-s = kmem_cache_zalloc(kmem_cache, GFP_KERNEL);
-if (!s)
-    goto out;
+        if s != core::ptr::null_mut() {
+            return err as *mut kmem_cache
+        }
+        (*s).name = name;
+        (*s).object_size = object_size;
+        (*s).size = object_size;
+        (*s).align = align;
+        (*s).ctor = ctor;
+        if CONFIG_HARDENED_USERCOPY {
+            (*s).useroffset = useroffset;
+            (*s).usersize = usersize;
+        }
 
-s->name = name;
-s->size = s->object_size = object_size;
-s->align = align;
-s->ctor = ctor;
-#ifdef CONFIG_HARDENED_USERCOPY
-s->useroffset = useroffset;
-s->usersize = usersize;
-#endif
+        err = __kmem_cache_create(s, flags);
+        if err != 0 {
+            kmem_cache_free(kmem_cache_obj, s as *const c_void);
+            return err as *mut kmem_cache
+        }
 
-err = __kmem_cache_create(s, flags);
-if (err)
-    goto out_free_cache;
-
-s->refcount = 1;
-list_add(&s->list, &slab_caches);
-return s;
-
-out_free_cache:
-kmem_cache_free(kmem_cache, s);
-out:
-return ERR_PTR(err);
+        (*s).refcount = 1;
+        slab_caches.next.prev = (*s).list;
+        (*s).list.next = slab_caches.next;
+        (*s).list.prev = slab_caches;
+        slab_caches.next = (*s).list;
+        s
+    }
 }
-*/
+
 /**
  * kmem_cache_create_usercopy - Create a cache with a region suitable
  * for copying to userspace

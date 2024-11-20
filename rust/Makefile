@@ -15,9 +15,6 @@ CFLAGS_REMOVE_helpers/helpers.o = -Wmissing-prototypes -Wmissing-declarations
 always-$(CONFIG_RUST) += libmacros.so
 no-clean-files += libmacros.so
 
-always-$(CONFIG_RUST) += mm/slab_common.rs
-obj-$(CONFIG_RUST) += slab_common.o
-
 always-$(CONFIG_RUST) += bindings/bindings_generated.rs bindings/bindings_helpers_generated.rs
 obj-$(CONFIG_RUST) += alloc.o bindings.o kernel.o
 always-$(CONFIG_RUST) += exports_alloc_generated.h exports_helpers_generated.h \
@@ -39,6 +36,9 @@ always-$(CONFIG_RUST_KERNEL_DOCTESTS) += doctests_kernel_generated_kunit.c
 
 obj-$(CONFIG_RUST_KERNEL_DOCTESTS) += doctests_kernel_generated.o
 obj-$(CONFIG_RUST_KERNEL_DOCTESTS) += doctests_kernel_generated_kunit.o
+
+always-$(CONFIG_RUST) += mm/slab_common.rs
+obj-$(CONFIG_RUST) += slab_common.o
 
 # Avoids running `$(RUSTC)` for the sysroot when it may not be available.
 ifdef CONFIG_RUST
@@ -431,8 +431,8 @@ $(obj)/kernel.o: $(src)/kernel/lib.rs $(obj)/alloc.o $(obj)/build_error.o \
 
 $(obj)/slab_common.o: private rustc_target_flags = --extern alloc \
     --extern build_error --extern macros --extern bindings
-$(obj)/slab_common.o: $(src)/mm/slab_common.rs \
-	$(obj)/compiler_builtins.o $(obj)/bindings.o FORCE
+$(obj)/slab_common.o: $(src)/mm/slab_common.rs $(obj)/alloc.o \
+	$(obj)/bindings.o $(obj)/compiler_builtins.o FORCE
 	+$(call if_changed_rule,rustc_library)
 
 endif # CONFIG_RUST

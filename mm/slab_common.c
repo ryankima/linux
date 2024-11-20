@@ -107,6 +107,7 @@ static inline int kmem_cache_sanity_check(const char *name, unsigned int size)
 }
 #endif
 
+
 // /*
 //  * Figure out what the alignment of the objects will be given a set of
 //  * flags, a user specified alignment and the size of the objects.
@@ -174,7 +175,7 @@ struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
 	size = ALIGN(size, sizeof(void *));
 	align = calculate_alignment(flags, align, size);
 	size = ALIGN(size, align);
-	flags = kmem_cache_flags(flags, name);
+flags = kmem_cache_flags(flags, name);
 
 	if (flags & SLAB_NEVER_MERGE)
 		return NULL;
