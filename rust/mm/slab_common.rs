@@ -196,8 +196,8 @@ pub union freelist_aba_t {
 #[allow(non_camel_case_types)]
 #[derive(Copy, Clone)]
 pub union slab_freelist_counter_type {
-    list: slab_freelist_counter,
-    freelist: freelist_aba_t
+    freelist: slab_freelist_counter,
+    freelist_aba: freelist_aba_t
 }
 
 #[repr(C)]
@@ -205,7 +205,7 @@ pub union slab_freelist_counter_type {
 #[derive(Copy, Clone)]
 pub struct slab_list_and_counter {
     list: slab_member_list_type,
-    counter: slab_freelist_counter_type
+    freelist_counter: slab_freelist_counter_type
 
 }
 
