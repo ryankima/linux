@@ -1,6 +1,6 @@
 #![no_std]
 
-use core::ffi::{c_void, c_char};
+use core::ffi::{c_void, c_char, CStr};
 use core::marker::Copy;
 use core::convert::From;
 
@@ -284,13 +284,17 @@ const SLAB_POISON: u32 = 1 << (_slab_flag_bits::_SLAB_POISON as u32);
 const SLAB_NO_USER_FLAGS: u32 = 1 << (_slab_flag_bits::_SLAB_NO_USER_FLAGS as u32);
 const SLAB_STORE_USER: u32 = 1 << (_slab_flag_bits::_SLAB_STORE_USER as u32);
 const SLAB_TRACE: u32 = 1 << (_slab_flag_bits::_SLAB_TRACE as u32);
+const SLAB_PANIC: u32 = 1 << (_slab_flag_bits::_SLAB_PANIC as u32);
 const SLAB_TYPESAFE_BY_RCU: u32 = 1 << (_slab_flag_bits::_SLAB_TYPESAFE_BY_RCU as u32);
 const SLAB_NOLEAKTRACE: u32 = 1 << (_slab_flag_bits::_SLAB_NOLEAKTRACE as u32);
+const SLAB_CONSISTENCY_CHECKS: u32 = 1 << (_slab_flag_bits::_SLAB_CONSISTENCY_CHECKS as u32);
 const SLAB_NO_MERGE: u32 = 1 << (_slab_flag_bits::_SLAB_NO_MERGE as u32);
 const SLAB_RECLAIM_ACCOUNT: u32 = 1 << (_slab_flag_bits::_SLAB_RECLAIM_ACCOUNT as u32);
 const SLAB_CACHE_DMA: u32 = 1 << (_slab_flag_bits::_SLAB_CACHE_DMA as u32);
 const SLAB_CACHE_DMA32: u32 = 1 << (_slab_flag_bits::_SLAB_CACHE_DMA32 as u32);
 const SLAB_ACCOUNT: u32 = 1 << (_slab_flag_bits::_SLAB_ACCOUNT as u32);
+const SLAB_KMALLOC: u32 = 1 << (_slab_flag_bits::_SLAB_KMALLOC as u32);
+
 
 
 const SLAB_NEVER_MERGE: u32 = SLAB_RED_ZONE | SLAB_POISON | SLAB_STORE_USER |
@@ -299,6 +303,32 @@ const SLAB_NEVER_MERGE: u32 = SLAB_RED_ZONE | SLAB_POISON | SLAB_STORE_USER |
 
 const SLAB_MERGE_SAME: u32 =  SLAB_RECLAIM_ACCOUNT | SLAB_CACHE_DMA | 
                                 SLAB_CACHE_DMA32 | SLAB_ACCOUNT;
+
+const SLAB_CORE_FLAGS: u32 = SLAB_HWCACHE_ALIGN | SLAB_CACHE_DMA | 
+                                    SLAB_CACHE_DMA32 | SLAB_PANIC | 
+                                    SLAB_TYPESAFE_BY_RCU;
+
+const SLAB_FLAGS_PERMITTED: u32 = SLAB_CORE_FLAGS | 
+                                    SLAB_RED_ZONE | 
+                                    SLAB_POISON | 
+                                    SLAB_STORE_USER | 
+                                    SLAB_TRACE | 
+                                    SLAB_CONSISTENCY_CHECKS | 
+                                    SLAB_NOLEAKTRACE | 
+                                    SLAB_RECLAIM_ACCOUNT | 
+                                    SLAB_ACCOUNT | 
+                                    SLAB_KMALLOC | 
+                                    SLAB_NO_MERGE | 
+                                    SLAB_NO_USER_FLAGS;
+const SLAB_DEBUG_FLAGS: u32 = SLAB_RED_ZONE | SLAB_POISON | SLAB_STORE_USER |
+                                        SLAB_TRACE | SLAB_CONSISTENCY_CHECKS;
+
+const SLAB_CACHE_FLAGS: u32 = SLAB_NOLEAKTRACE | SLAB_RECLAIM_ACCOUNT | 
+                                            SLAB_ACCOUNT |  SLAB_NO_USER_FLAGS | 
+                                            SLAB_KMALLOC | SLAB_NO_MERGE;
+
+const CACHE_CREATE_MASK: u32 =  SLAB_CORE_FLAGS | SLAB_DEBUG_FLAGS | SLAB_CACHE_FLAGS;
+
 
 /**************************** BEGIN MACRO DEFINITIONS ********************************/
 
@@ -311,6 +341,23 @@ fn align_mask<T: Copy + core::ops::Add<Output = T> + core::ops::BitAnd<Output = 
 fn align_macro<T: Copy + From<u8> + core::ops::Add<Output = T> + core::ops::BitAnd<Output = T> + core::ops::Not<Output = T> + core::ops::Sub<Output = T>>(x: T, a: T) -> T {
     let mask = a - T::from(1u8); // a - 1, same as in C
     align_mask(x, mask)
+}
+
+fn err_ptr(err: isize) -> *mut () {
+    err as *mut ()
+}
+
+fn ptr_err(ptr: *const ()) -> isize {
+    ptr as isize
+}
+
+fn is_err(ptr: *const ()) -> bool {
+    (ptr as usize) > usize::MAX - 1000
+}
+
+fn kmem_cache_sanity_check(name: *const c_char, size: u32) -> i32
+{
+	return 0;
 }
 
 /**************************** BEGIN FUNCTION DEFINITIONS ********************************/
@@ -378,10 +425,21 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
  extern "C" {
     pub static slab_caches: bindings::LIST_HEAD;
     pub static kmem_cache_obj: *mut kmem_cache;
+    pub static slab_mutex: bindings::mutex;
+    pub static slub_debug_enabled: bindings::static_key_false;
+
     pub fn kmem_cache_alloc_noprof(cachep: *mut kmem_cache, flags: gfp_t) -> *mut core::ffi::c_void;
     pub fn __kmem_cache_create(cache: *mut kmem_cache, flags: slab_flags_t) -> u32;
     pub fn kmem_cache_free(s: *mut kmem_cache, objp: *const c_void);
-
+    pub fn dump_stack();
+    pub fn stack_depot_init();
+    pub fn mutex_unlock(m: *mut bindings::slab_mutex);
+    pub fn mutex_lock(m: *mut bindings::slab_mutex);
+    pub fn static_key_enable(key: *mut bindings::static_key);
+    pub fn kstrdup_const(s: *const c_char, gfp: gfp_t) -> *const c_char;
+    pub fn __kmem_cache_alias(name: *const c_char, size: u32, align: u32,
+                              flags: slab_flags_t, ctor: *const c_void) -> *mut kmem_cache;
+    pub fn  kfree_const(x: *const c_void);
 }
 
 #[no_mangle]
@@ -464,35 +522,38 @@ fn create_cache(name: *const c_char,
     // #define kmem_cache_alloc(...)			alloc_hooks(kmem_cache_alloc_noprof(__VA_ARGS__))
     // kmem_cache_alloc(_k, (_flags)|__GFP_ZERO)
     // The hook is need, but annoyting see <linux/alloc_tag.h>
+    // TODO: what to do with alloc_hooks
+    let mut s: *mut kmem_cache = core::ptr::null_mut();
     unsafe {
-        let s: *mut kmem_cache = kmem_cache_alloc_noprof(kmem_cache_obj, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
-
-        if s != core::ptr::null_mut() {
-            return err as *mut kmem_cache
-        }
-        (*s).name = name;
-        (*s).object_size = object_size;
-        (*s).size = object_size;
-        (*s).align = align;
-        (*s).ctor = ctor;
-        if CONFIG_HARDENED_USERCOPY {
-            (*s).useroffset = useroffset;
-            (*s).usersize = usersize;
-        }
-
-        err = __kmem_cache_create(s, flags);
-        if err != 0 {
-            kmem_cache_free(kmem_cache_obj, s as *const c_void);
-            return err as *mut kmem_cache
-        }
-
-        (*s).refcount = 1;
-        slab_caches.next.prev = (*s).list;
-        (*s).list.next = slab_caches.next;
-        (*s).list.prev = slab_caches;
-        slab_caches.next = (*s).list;
-        s
+        s = kmem_cache_alloc_noprof(kmem_cache_obj, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
     }
+    if s != core::ptr::null_mut() {
+        return err as *mut kmem_cache
+    }
+    (*s).name = name;
+    (*s).object_size = object_size;
+    (*s).size = object_size;
+    (*s).align = align;
+    (*s).ctor = ctor;
+    if CONFIG_HARDENED_USERCOPY {
+        (*s).useroffset = useroffset;
+        (*s).usersize = usersize;
+    }
+
+    err = __kmem_cache_create(s, flags);
+    if err != 0 {
+        unsafe {
+            kmem_cache_free(kmem_cache_obj, s as *const c_void);
+        }
+        return err as *mut kmem_cache
+    }
+
+    (*s).refcount = 1;
+    slab_caches.next.prev = (*s).list;
+    (*s).list.next = slab_caches.next;
+    (*s).list.prev = slab_caches;
+    slab_caches.next = (*s).list;
+    s
 }
 
 /**
@@ -523,44 +584,74 @@ fn create_cache(name: *const c_char,
  *
  * Return: a pointer to the cache on success, NULL on failure.
  */
- /*
- struct kmem_cache *
- kmem_cache_create_usercopy(const char *name,
-           unsigned int size, unsigned int align,
-           slab_flags_t flags,
-           unsigned int useroffset, unsigned int usersize,
-           void (*ctor)(void *))
+ 
+fn kmem_cache_create_usercopy(name: *const c_char,
+           size: u32, align: u32, flags: slab_flags_t,
+           useroffset: u32, usersize: u32,
+           ctor: *mut c_void) -> *mut kmem_cache
  {
-     struct kmem_cache *s = NULL;
-     const char *cache_name;
-     int err;
+    let mut s: *mut kmem_cache = core::ptr::null_mut();
  
- #ifdef CONFIG_SLUB_DEBUG
-     /*
-      * If no slab_debug was enabled globally, the static key is not yet
-      * enabled by setup_slub_debug(). Enable it if the cache is being
-      * created with any of the debugging flags passed explicitly.
-      * It's also possible that this is the first cache created with
-      * SLAB_STORE_USER and we should init stack_depot for it.
-      */
-     if (flags & SLAB_DEBUG_FLAGS)
-         static_branch_enable(&slub_debug_enabled);
-     if (flags & SLAB_STORE_USER)
-         stack_depot_init();
- #endif
+    if CONFIG_SLUB_DEBUG {
+        /*
+        * If no slab_debug was enabled globally, the static key is not yet
+        * enabled by setup_slub_debug(). Enable it if the cache is being
+        * created with any of the debugging flags passed explicitly.
+        * It's also possible that this is the first cache created with
+        * SLAB_STORE_USER and we should init stack_depot for it.
+        */
+        if flags & SLAB_DEBUG_FLAGS != 0 {
+            unsafe {
+                static_key_enable(&slub_debug_enabled);
+            }
+        }
+        if flags & SLAB_STORE_USER != 0 {
+            unsafe {
+                stack_depot_init();
+            }
+        }
+    }
  
-     mutex_lock(&slab_mutex);
- 
+    unsafe {
+        mutex_lock(&slab_mutex);
+    }
+     let mut err: i32 = 0;
      err = kmem_cache_sanity_check(name, size);
-     if (err) {
-         goto out_unlock;
+     if err != 0 {
+        unsafe {
+            mutex_unlock(&slab_mutex);
+
+            if flags & SLAB_PANIC != 0 {
+                panic!(
+                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
+                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
+                );
+            }
+            else {
+                dump_stack();
+            }
+            return core::ptr::null_mut();
+        }
      }
  
      /* Refuse requests with allocator specific flags */
-     if (flags & ~SLAB_FLAGS_PERMITTED) {
-         err = -EINVAL;
-         goto out_unlock;
-     }
+     if flags & !SLAB_FLAGS_PERMITTED != 0 {
+         err = -(EINVAL as i32);
+         unsafe {
+            mutex_unlock(&slab_mutex);
+
+            if flags & SLAB_PANIC != 0 {
+                panic!(
+                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
+                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
+                );
+            }
+            else {
+                dump_stack();
+            }
+            return core::ptr::null_mut();
+        }
+    }
  
      /*
       * Some allocators will constraint the set of valid flags to a subset
@@ -571,47 +662,86 @@ fn create_cache(name: *const c_char,
      flags &= CACHE_CREATE_MASK;
  
      /* Fail closed on bad usersize of useroffset values. */
-     if (!IS_ENABLED(CONFIG_HARDENED_USERCOPY) ||
-         WARN_ON(!usersize && useroffset) ||
-         WARN_ON(size < usersize || size - usersize < useroffset))
-         usersize = useroffset = 0;
+    if (!CONFIG_HARDENED_USERCOPY) ||
+         (usersize == 0 && useroffset != 0) ||
+         (size < usersize || size - usersize < useroffset) {
+        usersize = 0;
+        useroffset = 0;
+    }
  
-     if (!usersize)
-         s = __kmem_cache_alias(name, size, align, flags, ctor);
-     if (s)
-         goto out_unlock;
+     if usersize == 0 {
+        unsafe {
+            s = __kmem_cache_alias(name, size, align, flags, ctor);
+        }
+     }
+     if s != core::ptr::null_mut() {
+        unsafe {
+            mutex_unlock(&slab_mutex);
+
+            if flags & SLAB_PANIC != 0 {
+                panic!(
+                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
+                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
+                );
+            }
+            else {
+                dump_stack();
+            }
+            return core::ptr::null_mut();
+        }
+    }
  
-     cache_name = kstrdup_const(name, GFP_KERNEL);
-     if (!cache_name) {
-         err = -ENOMEM;
-         goto out_unlock;
+     let cache_name: *const c_char = kstrdup_const(name, gfp_t::GFP_KERNEL);
+     if cache_name != core::ptr::null_mut() {
+         err = -(ENOMEM as i32);
+         unsafe {
+            mutex_unlock(&slab_mutex);
+
+            if flags & SLAB_PANIC != 0 {
+                panic!(
+                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
+                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
+                );
+            }
+            else {
+                dump_stack();
+            }
+            return core::ptr::null_mut();
+        }
      }
  
-     s = create_cache(cache_name, size,
+    s = create_cache(cache_name, size,
               calculate_alignment(flags, align, size),
-              flags, useroffset, usersize, ctor, NULL);
-     if (IS_ERR(s)) {
-         err = PTR_ERR(s);
-         kfree_const(cache_name);
-     }
- 
- out_unlock:
-     mutex_unlock(&slab_mutex);
- 
-     if (err) {
-         if (flags & SLAB_PANIC)
-             panic("%s: Failed to create slab '%s'. Error %d\n",
-                 __func__, name, err);
-         else {
-             pr_warn("%s(%s) failed with error %d\n",
-                 __func__, name, err);
-             dump_stack();
+              flags, useroffset, usersize, ctor, core::ptr::null_mut());
+     if is_err(s as *const ()) {
+         err = ptr_err(s as *const ()) as i32;
+         unsafe {
+            kfree_const(cache_name as *const c_void);
          }
-         return NULL;
      }
-     return s;
+     if err != 0 {
+        unsafe {
+            mutex_unlock(&slab_mutex);
+
+            if flags & SLAB_PANIC != 0 {
+                panic!(
+                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
+                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
+                );
+            }
+            else {
+                dump_stack();
+            }
+            return core::ptr::null_mut();
+        }
+     }
+     
+     unsafe {
+         mutex_unlock(&slab_mutex);
+     }
+     s
  }
-*/
+
 /**
  * kfree_sensitive - Clear sensitive information in memory before freeing
  * @p: object to free memory of
