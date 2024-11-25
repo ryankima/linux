@@ -7,6 +7,7 @@ use core::convert::From;
 use bindings;
 
 /**************************** BEGIN DEFINES DEFINITIONS ********************************/
+const CONFIG_SLAB_BUCKETS: bool = true;
 const CONFIG_64BIT: bool = true;
 const system_has_cmpxchg128: bool = true;
 const CONFIG_SLUB_CPU_PARTIAL: bool = true;
@@ -59,9 +60,13 @@ const EPIPE: u32 =		32;	/* Broken pipe */
 const EDOM: u32 =		33;	/* Math argument out of domain of func */
 const ERANGE: u32 =		34;	/* Math result not representable */
 
+const RANDOM_KMALLOC_CACHES_NR: u32 =	0;
+
 /**************************** BEGIN TYPE DEFINITIONS ********************************/
 #[allow(non_camel_case_types)]
 type slab_flags_t = u32;
+
+#[warn(non_camel_case_types)]
 type freelist_full_t = u64;
 
 #[repr(C)]
@@ -277,6 +282,15 @@ enum _slab_flag_bits {
 	_SLAB_FLAGS_LAST_BIT
 }
 
+#[allow(non_camel_case_types)]
+#[derive(PartialEq, PartialOrd)]
+enum slab_state_t {
+	DOWN,			/* No slab functionality yet */
+	PARTIAL,		/* SLUB: kmem_cache_node available */
+	UP,			/* Slab caches usable but not all extras yet */
+	FULL			/* Everything is working */
+}
+
 const slab_nomerge: bool = false; // TODO: check if this is actually false
 const SLAB_HWCACHE_ALIGN: u32 = 1 << (_slab_flag_bits::_SLAB_HWCACHE_ALIGN as u32);
 const SLAB_RED_ZONE: u32 = 1 << (_slab_flag_bits::_SLAB_RED_ZONE as u32);
@@ -294,6 +308,10 @@ const SLAB_CACHE_DMA: u32 = 1 << (_slab_flag_bits::_SLAB_CACHE_DMA as u32);
 const SLAB_CACHE_DMA32: u32 = 1 << (_slab_flag_bits::_SLAB_CACHE_DMA32 as u32);
 const SLAB_ACCOUNT: u32 = 1 << (_slab_flag_bits::_SLAB_ACCOUNT as u32);
 const SLAB_KMALLOC: u32 = 1 << (_slab_flag_bits::_SLAB_KMALLOC as u32);
+
+const PAGE_SHIFT: u32 = 12;
+const KMALLOC_SHIFT_HIGH: u32 = PAGE_SHIFT + 1;
+
 
 
 
@@ -427,8 +445,12 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub static kmem_cache_obj: *mut kmem_cache;
     pub static slab_mutex: bindings::mutex;
     pub static slub_debug_enabled: bindings::static_key_false;
+    pub static kmalloc_caches: *const bindings::kmem_buckets;
+    pub static slab_state: slab_state_t;
+    pub static kmem_buckets_cache: *const kmem_cache;
 
-    pub fn kmem_cache_alloc_noprof(cachep: *mut kmem_cache, flags: gfp_t) -> *mut core::ffi::c_void;
+
+    pub fn kmem_cache_alloc_noprof(cachep: *const kmem_cache, flags: gfp_t) -> *mut core::ffi::c_void;
     pub fn __kmem_cache_create(cache: *mut kmem_cache, flags: slab_flags_t) -> u32;
     pub fn kmem_cache_free(s: *mut kmem_cache, objp: *const c_void);
     pub fn dump_stack();
@@ -440,6 +462,13 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn __kmem_cache_alias(name: *const c_char, size: u32, align: u32,
                               flags: slab_flags_t, ctor: *const c_void) -> *mut kmem_cache;
     pub fn  kfree_const(x: *const c_void);
+    pub fn sysfs_slab_unlink(s: *mut kmem_cache);
+    pub fn sysfs_slab_release(s: *mut kmem_cache);
+    pub fn  slab_kmem_cache_release(s: *mut kmem_cache);
+    pub fn kfree(objp: *const c_void);
+    pub fn kmem_cache_destroy(s: *mut kmem_cache);
+    pub fn strchr(s: *const c_char, c: i32) -> *const c_char;
+    pub fn kasprintf(gfp_mask: u32, fmt: *const i8, ...) -> *mut i8;
 }
 
 #[no_mangle]
@@ -465,7 +494,7 @@ pub extern "C" fn find_mergeable(size: u32, mut align: u32, mut flags: slab_flag
         return core::ptr::null_mut();
     }
 
-    unsafe {
+    //unsafe {
         let s: *mut kmem_cache = slab_caches.prev;
         while s != slab_caches {
             if slab_unmergeable(s) != 0 {
@@ -498,7 +527,7 @@ pub extern "C" fn find_mergeable(size: u32, mut align: u32, mut flags: slab_flag
 
             s
         }
-    }
+    //}
 
     return core::ptr::null_mut();
 }
@@ -740,6 +769,197 @@ fn kmem_cache_create_usercopy(name: *const c_char,
          mutex_unlock(&slab_mutex);
      }
      s
+ }
+
+ /**
+ * kmem_cache_create - Create a cache.
+ * @name: A string which is used in /proc/slabinfo to identify this cache.
+ * @size: The size of objects to be created in this cache.
+ * @align: The required alignment for the objects.
+ * @flags: SLAB flags
+ * @ctor: A constructor for the objects.
+ *
+ * Cannot be called within a interrupt, but can be interrupted.
+ * The @ctor is run when new pages are allocated by the cache.
+ *
+ * The flags are
+ *
+ * %SLAB_POISON - Poison the slab with a known test pattern (a5a5a5a5)
+ * to catch references to uninitialised memory.
+ *
+ * %SLAB_RED_ZONE - Insert `Red` zones around the allocated memory to check
+ * for buffer overruns.
+ *
+ * %SLAB_HWCACHE_ALIGN - Align the objects in this cache to a hardware
+ * cacheline.  This can be beneficial if you're counting cycles as closely
+ * as davem.
+ *
+ * Return: a pointer to the cache on success, NULL on failure.
+ */
+
+ fn kmem_cache_create(name: *const c_char,
+    size: u32, align: u32, flags: slab_flags_t,
+    ctor: *mut c_void) -> *mut kmem_cache
+{
+	kmem_cache_create_usercopy(name, size, align, flags, 0, 0, ctor)
+}
+
+/**
+ * kmem_buckets_create - Create a set of caches that handle dynamic sized
+ *			 allocations via kmem_buckets_alloc()
+ * @name: A prefix string which is used in /proc/slabinfo to identify this
+ *	  cache. The individual caches with have their sizes as the suffix.
+ * @flags: SLAB flags (see kmem_cache_create() for details).
+ * @useroffset: Starting offset within an allocation that may be copied
+ *		to/from userspace.
+ * @usersize: How many bytes, starting at @useroffset, may be copied
+ *		to/from userspace.
+ * @ctor: A constructor for the objects, run when new allocations are made.
+ *
+ * Cannot be called within an interrupt, but can be interrupted.
+ *
+ * Return: a pointer to the cache on success, NULL on failure. When
+ * CONFIG_SLAB_BUCKETS is not enabled, ZERO_SIZE_PTR is returned, and
+ * subsequent calls to kmem_buckets_alloc() will fall back to kmalloc().
+ * (i.e. callers only need to check for NULL on failure.)
+ */
+fn kmem_buckets_create(name: *const c_char, flags: slab_flags_t,
+    useroffset: u32, usersize: u32, ctor: *mut c_void) -> *mut bindings::kmem_buckets
+{
+    let mut b: *mut bindings::kmem_buckets = core::ptr::null_mut();
+    let mut idx: i32 = 0;
+
+	/*
+	 * When the separate buckets API is not built in, just return
+	 * a non-NULL value for the kmem_buckets pointer, which will be
+	 * unused when performing allocations.
+	 */
+    if !CONFIG_SLAB_BUCKETS {
+        return 16 as *mut bindings::kmem_buckets;
+    }
+
+    if kmem_buckets_cache == core::ptr::null_mut() {
+        return core::ptr::null_mut();
+    }
+
+    // #define kmem_cache_alloc(...)			alloc_hooks(kmem_cache_alloc_noprof(__VA_ARGS__))
+    // kmem_cache_alloc(_k, (_flags)|__GFP_ZERO)
+    // The hook is need, but annoyting see <linux/alloc_tag.h>
+    // TODO: what to do with alloc_hooks
+    let mut s: *mut kmem_cache = core::ptr::null_mut();
+    unsafe {
+        b = kmem_cache_alloc_noprof(kmem_buckets_cache, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
+    }
+
+    if b == core::ptr::null_mut() {
+        return core::ptr::null_mut();
+    }
+
+    flags |= SLAB_NO_MERGE;
+
+     while idx < (KMALLOC_SHIFT_HIGH + 1) as i32 {
+        let mut short_size: *const c_char = core::ptr::null_mut();
+        let mut cache_name: *const c_char = core::ptr::null_mut();
+        let mut cache_useroffset: u32 = 0; 
+        let mut cache_usersize: u32 = 0;
+        let mut size: u32 = 0;
+
+        if kmalloc_caches[bindings::kmalloc_cache_type::KMALLOC_NORMAL][idx] == core::ptr::null_mut() {
+            continue;
+        }
+
+        size = kmalloc_caches[bindings::kmalloc_cache_type::KMALLOC_NORMAL][idx].object_size;
+        if size == 0 {
+            continue;
+        }
+
+        unsafe {
+            short_size = strchr(kmalloc_caches[bindings::kmalloc_cache_type::KMALLOC_NORMAL][idx].name, '-' as i32);
+        }
+        if short_size == core::ptr::null_mut() {
+            idx = 0;
+            while idx < (KMALLOC_SHIFT_HIGH + 1) as i32 {
+                unsafe {
+                    kmem_cache_destroy((*b)[idx]);
+                }
+                idx += 1;
+            }
+            unsafe {
+                kfree(b);
+            }
+
+            return core::ptr::null_mut();
+        }
+
+        unsafe {
+            cache_name = kasprintf(gfp_t::GFP_KERNEL as u32, "%s-%s".as_ptr() as *const i8, name, short_size.add(1));
+        }
+        if cache_name == core::ptr::null_mut() {
+            idx = 0;
+            while idx < (KMALLOC_SHIFT_HIGH + 1) as i32 {
+                unsafe {
+                    kmem_cache_destroy((*b)[idx]);
+                }
+                idx += 1;
+            }
+            unsafe {
+                kfree(b);
+            }
+
+            return core::ptr::null_mut();
+        }
+
+        if useroffset >= size {
+            cache_useroffset = 0;
+            cache_usersize = 0;
+        } else {
+            cache_useroffset = useroffset;
+            cache_usersize = core::cmp::min(size - cache_useroffset, usersize);
+        }
+        (*b)[idx] = kmem_cache_create_usercopy(cache_name, size,
+                    0, flags, cache_useroffset,
+                    cache_usersize, ctor);
+        unsafe {
+            kfree(cache_name as *const c_void);
+        }
+        if (*b)[idx] == core::ptr::null_mut() {
+            idx = 0;
+            while idx < (KMALLOC_SHIFT_HIGH + 1) as i32{
+                unsafe {
+                    kmem_cache_destroy((*b)[idx]);
+                }
+                idx += 1;
+            }
+            unsafe {
+                kfree(b);
+            }
+
+            return core::ptr::null_mut();
+        }
+        idx += 1;
+    }
+ b
+}
+
+/*
+ * For a given kmem_cache, kmem_cache_destroy() should only be called
+ * once or there will be a use-after-free problem. The actual deletion
+ * and release of the kobject does not need slab_mutex or cpu_hotplug_lock
+ * protection. So they are now done without holding those locks.
+ *
+ * Note that there will be a slight delay in the deletion of sysfs files
+ * if kmem_cache_release() is called indrectly from a work function.
+ */
+ fn kmem_cache_release(s: *mut kmem_cache)
+ {
+    unsafe {
+        if slab_state >= slab_state_t::FULL {
+            sysfs_slab_unlink(s);
+            sysfs_slab_release(s);
+        } else {
+            slab_kmem_cache_release(s);
+        }
+    }
  }
 
 /**
