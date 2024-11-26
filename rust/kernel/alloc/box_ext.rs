@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 //! Extensions to [`Box`] for fallible allocations.
-
+#![feature(box_uninit_write)]
 use super::{AllocError, Flags};
 use alloc::boxed::Box;
 use core::{mem::MaybeUninit, ptr, result::Result};
