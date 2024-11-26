@@ -313,10 +313,15 @@ const SLAB_ACCOUNT: u32 = 1 << (_slab_flag_bits::_SLAB_ACCOUNT as u32);
 const SLAB_KMALLOC: u32 = 1 << (_slab_flag_bits::_SLAB_KMALLOC as u32);
 
 const PAGE_SHIFT: u32 = 12;
+const MAX_PAGE_ORDER: u32 = 10;
 const PAGE_SIZE: u32 = 1 << PAGE_SHIFT;
 const KMALLOC_SHIFT_HIGH: u32 = PAGE_SHIFT + 1;
+const KMALLOC_MAX_CACHE_SIZE: u32 =	1 << KMALLOC_SHIFT_HIGH;
 
-
+const KMALLOC_SHIFT_MAX: u32 = MAX_PAGE_ORDER + PAGE_SHIFT;
+const KMALLOC_MAX_SIZE: u32 = 1 << KMALLOC_SHIFT_MAX;
+const KMALLOC_SHIFT_LOW: u32 =	3;
+const KMALLOC_MIN_SIZE: u32 = 1 << KMALLOC_SHIFT_LOW;
 
 
 const SLAB_NEVER_MERGE: u32 = SLAB_RED_ZONE | SLAB_POISON | SLAB_STORE_USER |
@@ -399,6 +404,11 @@ macro_rules! offsetof {
             offset
         }
     };
+}
+
+fn size_index_elem(bytes: u32) -> u32
+{
+	(bytes - 1) / 8
 }
 
 
@@ -549,6 +559,7 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub static kmalloc_caches: *const bindings::kmem_buckets;
     pub static slab_state: slab_state_t;
     pub static kmem_buckets_cache: *const kmem_cache;
+    pub static mut kmalloc_size_index: [u8; 24];
 
 
     pub fn kmem_cache_alloc_noprof(cachep: *const kmem_cache, flags: gfp_t) -> *mut core::ffi::c_void;
@@ -585,7 +596,8 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn virt_to_slab(addr: *const c_void) -> *mut slab;
     pub fn cpus_read_lock();
     pub fn cpus_read_unlock();
-
+    pub fn get_order(s: u32) -> i32;
+    pub fn kmalloc_slab(size: usize, b: *mut bindings::kmem_buckets, flags: gfp_t, caller: u32) -> *mut kmem_cache;
 }
 
 #[no_mangle]
@@ -1377,19 +1389,345 @@ fn create_kmalloc_cache(name: *const c_char,
 	s
 }
 
+#[no_mangle]
+extern "C" fn kmalloc_size_roundup(size: usize) -> usize {
+    if size != 0 && size as u32 <= KMALLOC_MAX_CACHE_SIZE {
+        /*
+		 * The flags don't matter since size_index is common to all.
+		 * Neither does the caller for just getting ->object_size.
+		 */
+        unsafe {
+            let slab = kmalloc_slab(size, core::ptr::null_mut(), gfp_t::GFP_KERNEL, 0);
+            if !slab.is_null() {
+                return (*slab).object_size.try_into().unwrap();
+            }
+        }
+    }
 
-/**
- * kfree_sensitive - Clear sensitive information in memory before freeing
- * @p: object to free memory of
+    if size != 0 && size as u32 <= KMALLOC_MAX_SIZE {
+        return (PAGE_SIZE << unsafe { get_order(size as u32) }).try_into().unwrap();
+    }
+
+    // Return the size for 0 or very large values.
+    size
+}
+
+
+/*
+ * Patch up the size_index table if we have strange large alignment
+ * requirements for the kmalloc array. This is only the case for
+ * MIPS it seems. The standard arches will not generate any code here.
  *
- * The memory of the object @p points to is zeroed before freed.
- * If @p is %NULL, kfree_sensitive() does nothing.
+ * Largest permitted alignment is 256 bytes due to the way we
+ * handle the index determination for the smaller caches.
  *
- * Note: this function zeroes the whole allocated buffer which can be a good
- * deal bigger than the requested buffer size passed to kmalloc(). So be
- * careful when using this function in performance sensitive code.
+ * Make sure that nothing crazy happens if someone starts tinkering
+ * around with ARCH_KMALLOC_MINALIGN
  */
+ fn setup_kmalloc_cache_index_table(_: c_void)
+ {
+     let mut i: u32 = 8;
+ 
+     while i < KMALLOC_MIN_SIZE {
+         let elem: u32 = size_index_elem(i);
+ 
+         if elem >= 24 {
+             break;
+         }
+         unsafe {
+            kmalloc_size_index[elem as usize] = KMALLOC_SHIFT_LOW as u8;
+         }
+
+         i += 8;
+     }
+ 
+     if KMALLOC_MIN_SIZE >= 64 {
+         /*
+          * The 96 byte sized cache is not used if the alignment
+          * is 64 byte.
+          */
+         i = 64 + 8;
+         while i <= 96 {
+            unsafe {
+                kmalloc_size_index[size_index_elem(i) as usize] = 7;
+            }
+            i += 8;
+         }
+ 
+     }
+ 
+     if KMALLOC_MIN_SIZE >= 128 {
+         /*
+          * The 192 byte sized cache is not used if the alignment
+          * is 128 byte. Redirect kmalloc to use the 256 byte cache
+          * instead.
+          */
+          i = 128 + 8;
+         while i <= 192 {
+            unsafe {
+                kmalloc_size_index[size_index_elem(i) as usize] = 8;
+            }
+             i += 8;
+         }
+     }
+ }
  /*
+ static unsigned int __kmalloc_minalign(void)
+ {
+     unsigned int minalign = dma_get_cache_alignment();
+ 
+     if (IS_ENABLED(CONFIG_DMA_BOUNCE_UNALIGNED_KMALLOC) &&
+         is_swiotlb_allocated())
+         minalign = ARCH_KMALLOC_MINALIGN;
+ 
+     return max(minalign, arch_slab_minalign());
+ }
+ 
+ static void __init
+ new_kmalloc_cache(int idx, enum kmalloc_cache_type type)
+ {
+     slab_flags_t flags = 0;
+     unsigned int minalign = __kmalloc_minalign();
+     unsigned int aligned_size = kmalloc_info[idx].size;
+     int aligned_idx = idx;
+ 
+     if ((KMALLOC_RECLAIM != KMALLOC_NORMAL) && (type == KMALLOC_RECLAIM)) {
+         flags |= SLAB_RECLAIM_ACCOUNT;
+     } else if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_CGROUP)) {
+         if (mem_cgroup_kmem_disabled()) {
+             kmalloc_caches[type][idx] = kmalloc_caches[KMALLOC_NORMAL][idx];
+             return;
+         }
+         flags |= SLAB_ACCOUNT;
+     } else if (IS_ENABLED(CONFIG_ZONE_DMA) && (type == KMALLOC_DMA)) {
+         flags |= SLAB_CACHE_DMA;
+     }
+ 
+ #ifdef CONFIG_RANDOM_KMALLOC_CACHES
+     if (type >= KMALLOC_RANDOM_START && type <= KMALLOC_RANDOM_END)
+         flags |= SLAB_NO_MERGE;
+ #endif
+ 
+     /*
+      * If CONFIG_MEMCG is enabled, disable cache merging for
+      * KMALLOC_NORMAL caches.
+      */
+     if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_NORMAL))
+         flags |= SLAB_NO_MERGE;
+ 
+     if (minalign > ARCH_KMALLOC_MINALIGN) {
+         aligned_size = ALIGN(aligned_size, minalign);
+         aligned_idx = __kmalloc_index(aligned_size, false);
+     }
+ 
+     if (!kmalloc_caches[type][aligned_idx])
+         kmalloc_caches[type][aligned_idx] = create_kmalloc_cache(
+                     kmalloc_info[aligned_idx].name[type],
+                     aligned_size, flags);
+     if (idx != aligned_idx)
+         kmalloc_caches[type][idx] = kmalloc_caches[type][aligned_idx];
+ }
+ 
+ /*
+  * Create the kmalloc array. Some of the regular kmalloc arrays
+  * may already have been created because they were needed to
+  * enable allocations for slab creation.
+  */
+ void __init create_kmalloc_caches(void)
+ {
+     int i;
+     enum kmalloc_cache_type type;
+ 
+     /*
+      * Including KMALLOC_CGROUP if CONFIG_MEMCG defined
+      */
+     for (type = KMALLOC_NORMAL; type < NR_KMALLOC_TYPES; type++) {
+         /* Caches that are NOT of the two-to-the-power-of size. */
+         if (KMALLOC_MIN_SIZE <= 32)
+             new_kmalloc_cache(1, type);
+         if (KMALLOC_MIN_SIZE <= 64)
+             new_kmalloc_cache(2, type);
+ 
+         /* Caches that are of the two-to-the-power-of size. */
+         for (i = KMALLOC_SHIFT_LOW; i <= KMALLOC_SHIFT_HIGH; i++)
+             new_kmalloc_cache(i, type);
+     }
+ #ifdef CONFIG_RANDOM_KMALLOC_CACHES
+     random_kmalloc_seed = get_random_u64();
+ #endif
+ 
+     /* Kmalloc array is now usable */
+     slab_state = UP;
+ 
+     if (IS_ENABLED(CONFIG_SLAB_BUCKETS))
+         kmem_buckets_cache = kmem_cache_create("kmalloc_buckets",
+                                sizeof(kmem_buckets),
+                                0, SLAB_NO_MERGE, NULL);
+ }
+ 
+ /**
+  * __ksize -- Report full size of underlying allocation
+  * @object: pointer to the object
+  *
+  * This should only be used internally to query the true size of allocations.
+  * It is not meant to be a way to discover the usable size of an allocation
+  * after the fact. Instead, use kmalloc_size_roundup(). Using memory beyond
+  * the originally requested allocation size may trigger KASAN, UBSAN_BOUNDS,
+  * and/or FORTIFY_SOURCE.
+  *
+  * Return: size of the actual memory used by @object in bytes
+  */
+ size_t __ksize(const void *object)
+ {
+     struct folio *folio;
+ 
+     if (unlikely(object == ZERO_SIZE_PTR))
+         return 0;
+ 
+     folio = virt_to_folio(object);
+ 
+     if (unlikely(!folio_test_slab(folio))) {
+         if (WARN_ON(folio_size(folio) <= KMALLOC_MAX_CACHE_SIZE))
+             return 0;
+         if (WARN_ON(object != folio_address(folio)))
+             return 0;
+         return folio_size(folio);
+     }
+ 
+ #ifdef CONFIG_SLUB_DEBUG
+     skip_orig_size_check(folio_slab(folio)->slab_cache, object);
+ #endif
+ 
+     return slab_ksize(folio_slab(folio)->slab_cache);
+ }
+ 
+ gfp_t kmalloc_fix_flags(gfp_t flags)
+ {
+     gfp_t invalid_mask = flags & GFP_SLAB_BUG_MASK;
+ 
+     flags &= ~GFP_SLAB_BUG_MASK;
+     pr_warn("Unexpected gfp: %#x (%pGg). Fixing up to gfp: %#x (%pGg). Fix your code!\n",
+             invalid_mask, &invalid_mask, flags, &flags);
+     dump_stack();
+ 
+     return flags;
+ }
+ 
+ #ifdef CONFIG_SLAB_FREELIST_RANDOM
+ /* Randomize a generic freelist */
+ static void freelist_randomize(unsigned int *list,
+                    unsigned int count)
+ {
+     unsigned int rand;
+     unsigned int i;
+ 
+     for (i = 0; i < count; i++)
+         list[i] = i;
+ 
+     /* Fisher-Yates shuffle */
+     for (i = count - 1; i > 0; i--) {
+         rand = get_random_u32_below(i + 1);
+         swap(list[i], list[rand]);
+     }
+ }
+ 
+ /* Create a random sequence per cache */
+ int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count,
+                     gfp_t gfp)
+ {
+ 
+     if (count < 2 || cachep->random_seq)
+         return 0;
+ 
+     cachep->random_seq = kcalloc(count, sizeof(unsigned int), gfp);
+     if (!cachep->random_seq)
+         return -ENOMEM;
+ 
+     freelist_randomize(cachep->random_seq, count);
+     return 0;
+ }
+ 
+ /* Destroy the per-cache random freelist sequence */
+ void cache_random_seq_destroy(struct kmem_cache *cachep)
+ {
+     kfree(cachep->random_seq);
+     cachep->random_seq = NULL;
+ }
+ #endif /* CONFIG_SLAB_FREELIST_RANDOM */
+ 
+
+ static __always_inline __realloc_size(2) void *
+ __do_krealloc(const void *p, size_t new_size, gfp_t flags)
+ {
+     void *ret;
+     size_t ks;
+ 
+     /* Check for double-free before calling ksize. */
+     if (likely(!ZERO_OR_NULL_PTR(p))) {
+         if (!kasan_check_byte(p))
+             return NULL;
+         ks = ksize(p);
+     } else
+         ks = 0;
+ 
+     /* If the object still fits, repoison it precisely. */
+     if (ks >= new_size) {
+         p = kasan_krealloc((void *)p, new_size, flags);
+         return (void *)p;
+     }
+ 
+     ret = kmalloc_node_track_caller_noprof(new_size, flags, NUMA_NO_NODE, _RET_IP_);
+     if (ret && p) {
+         /* Disable KASAN checks as the object's redzone is accessed. */
+         kasan_disable_current();
+         memcpy(ret, kasan_reset_tag(p), ks);
+         kasan_enable_current();
+     }
+ 
+     return ret;
+ }
+ 
+ /**
+  * krealloc - reallocate memory. The contents will remain unchanged.
+  * @p: object to reallocate memory for.
+  * @new_size: how many bytes of memory are required.
+  * @flags: the type of memory to allocate.
+  *
+  * The contents of the object pointed to are preserved up to the
+  * lesser of the new and old sizes (__GFP_ZERO flag is effectively ignored).
+  * If @p is %NULL, krealloc() behaves exactly like kmalloc().  If @new_size
+  * is 0 and @p is not a %NULL pointer, the object pointed to is freed.
+  *
+  * Return: pointer to the allocated memory or %NULL in case of error
+  */
+ void *krealloc_noprof(const void *p, size_t new_size, gfp_t flags)
+ {
+     void *ret;
+ 
+     if (unlikely(!new_size)) {
+         kfree(p);
+         return ZERO_SIZE_PTR;
+     }
+ 
+     ret = __do_krealloc(p, new_size, flags);
+     if (ret && kasan_reset_tag(p) != kasan_reset_tag(ret))
+         kfree(p);
+ 
+     return ret;
+ }
+ EXPORT_SYMBOL(krealloc_noprof);
+ 
+ /**
+  * kfree_sensitive - Clear sensitive information in memory before freeing
+  * @p: object to free memory of
+  *
+  * The memory of the object @p points to is zeroed before freed.
+  * If @p is %NULL, kfree_sensitive() does nothing.
+  *
+  * Note: this function zeroes the whole allocated buffer which can be a good
+  * deal bigger than the requested buffer size passed to kmalloc(). So be
+  * careful when using this function in performance sensitive code.
+  */
  void kfree_sensitive(const void *p)
  {
      size_t ks;
@@ -1401,34 +1739,30 @@ fn create_kmalloc_cache(name: *const c_char,
          memzero_explicit(mem, ks);
      }
      kfree(mem);
- }*/
-/*
-#[no_mangle]
-pub extern "C" fn  ksize(objp: *const c_void) -> u64
-{
-	/*
-	 * We need to first check that the pointer to the object is valid.
-	 * The KASAN report printed from ksize() is more useful, then when
-	 * it's printed later when the behaviour could be undefined due to
-	 * a potential use-after-free or double-free.
-	 *
-	 * We use kasan_check_byte(), which is supported for the hardware
-	 * tag-based KASAN mode, unlike kasan_check_read/write().
-	 *
-	 * If the pointed to memory is invalid, we return 0 to avoid users of
-	 * ksize() writing to and potentially corrupting the memory region.
-	 *
-	 * We want to perform the check before __ksize(), to avoid potentially
-	 * crashing in __ksize() due to accessing invalid metadata.
-	 */
+ }
+ 
+ size_t ksize(const void *objp)
+ {
      /*
-	if (unlikely(ZERO_OR_NULL_PTR(objp)) || !kasan_check_byte(objp))
-		return 0;
-
-	return kfence_ksize(objp) ?: __ksize(objp);
-    */
-    0
-}*/
+      * We need to first check that the pointer to the object is valid.
+      * The KASAN report printed from ksize() is more useful, then when
+      * it's printed later when the behaviour could be undefined due to
+      * a potential use-after-free or double-free.
+      *
+      * We use kasan_check_byte(), which is supported for the hardware
+      * tag-based KASAN mode, unlike kasan_check_read/write().
+      *
+      * If the pointed to memory is invalid, we return 0 to avoid users of
+      * ksize() writing to and potentially corrupting the memory region.
+      *
+      * We want to perform the check before __ksize(), to avoid potentially
+      * crashing in __ksize() due to accessing invalid metadata.
+      */
+     if (unlikely(ZERO_OR_NULL_PTR(objp)) || !kasan_check_byte(objp))
+         return 0;
+ 
+     return kfence_ksize(objp) ?: __ksize(objp);
+ }*/
 
 #[no_mangle]
 pub extern "C" fn kmem_cache_size(s: *const kmem_cache) -> u32 {
