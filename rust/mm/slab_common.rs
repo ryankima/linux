@@ -1,6 +1,7 @@
 use core::ffi::{c_void, c_char, CStr};
 use core::marker::Copy;
 use core::convert::From;
+use core::ptr::{addr_of, addr_of_mut};
 
 extern crate bindings;
 
@@ -396,14 +397,12 @@ fn ffs(x: u32) -> u32 {
 }
 
 macro_rules! offsetof {
-    ($type:ty, $field:ident) => {
-        unsafe {
-            let tmp: $type = core::mem::zeroed();
-            let offset = &(*tmp).$field as *const _ as usize - &tmp as *const _ as usize;
-            core::mem::forget(tmp); // Prevent deallocation of the zeroed memory
-            offset
-        }
-    };
+    ($type:ty, $field:ident) => {{
+        let tmp: $type = core::mem::zeroed();
+        let offset = &(*tmp).$field as *const _ as usize - &tmp as *const _ as usize;
+        core::mem::forget(tmp); // Prevent deallocation of the zeroed memory
+        offset
+    }};
 }
 
 fn size_index_elem(bytes: u32) -> u32
@@ -421,13 +420,21 @@ fn size_index_elem(bytes: u32) -> u32
  */
 fn __list_del(prev: *mut bindings::list_head, next: *mut bindings::list_head)
  {
-     next.prev = prev;
-     prev.next = next;
+    if next == core::ptr::null_mut() || prev == core::ptr::null_mut() {
+        panic!("Tried to delete a null list element\n");
+    }
+    unsafe {
+        (*next).prev = prev;
+        (*prev).next = next;
+    }
  }
  
+ // This shouldn't be called directly, entry presumed to be not none
 fn __list_del_entry(entry: *mut bindings::list_head)
  {
-     __list_del(entry.prev, entry.next);
+    unsafe {
+     __list_del((*entry).prev, (*entry).next);
+    }
  }
  
  /**
@@ -438,9 +445,14 @@ fn __list_del_entry(entry: *mut bindings::list_head)
   */
 fn list_del(entry: *mut bindings::list_head)
  {
+    if entry == core::ptr::null_mut() {
+        panic!("Tried to delete a null list entry\n");
+    }
      __list_del_entry(entry);
-     entry.next = LIST_POISON1;
-     entry.prev = LIST_POISON2;
+     unsafe {
+        (*entry).next = LIST_POISON1 as *mut bindings::list_head;
+        (*entry).prev = LIST_POISON2 as *mut bindings::list_head;
+     }
  }
 
  /*
@@ -453,10 +465,18 @@ fn __list_add(new: *mut bindings::list_head,
     prev: *mut bindings::list_head,
     next: *mut bindings::list_head)
 {
-next.prev = new;
-new.next = next;
-new.prev = prev;
-core::ptr::write_volatile(prev.next, new);
+    if new == core::ptr::null_mut() ||
+        prev == core::ptr::null_mut() ||
+        next == core::ptr::null_mut() {
+        panic!("Tried to add a null element\n");
+    }
+    unsafe {
+        (*next).prev = new;
+        (*new).next = next;
+        (*new).prev = prev;
+        // TODO: double check this
+        core::ptr::write_volatile((*prev).next, *new);
+    }
 }
 
 /**
@@ -469,7 +489,9 @@ core::ptr::write_volatile(prev.next, new);
 */
 fn list_add(new: *mut bindings::list_head, head: *mut bindings::list_head)
 {
-    __list_add(new, head, head.next);
+    unsafe {
+    __list_add(new, head, (*head).next);
+    }
 }
 
 
@@ -483,7 +505,9 @@ fn list_add(new: *mut bindings::list_head, head: *mut bindings::list_head)
 */
 fn list_add_tail(new: *mut bindings::list_head, head: *mut bindings::list_head)
 {
-    __list_add(new, head.prev, head);
+    unsafe {
+    __list_add(new, (*head).prev, head);
+    }  
 }
  
 
@@ -550,15 +574,15 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
  }
 
  extern "C" {
-    pub static slab_caches: bindings::list_head;
-    pub static slab_caches_to_rcu_destroy: bindings::list_head;
-    pub static slab_caches_to_rcu_destroy_work: bindings::work_struct;
-    pub static kmem_cache_obj: *mut kmem_cache;
-    pub static slab_mutex: bindings::mutex;
-    pub static slub_debug_enabled: bindings::static_key_false;
-    pub static kmalloc_caches: *const bindings::kmem_buckets;
-    pub static slab_state: slab_state_t;
-    pub static kmem_buckets_cache: *const kmem_cache;
+    pub static mut slab_caches: bindings::list_head;
+    pub static mut slab_caches_to_rcu_destroy: bindings::list_head;
+    pub static mut slab_caches_to_rcu_destroy_work: bindings::work_struct;
+    pub static mut kmem_cache_obj: *mut kmem_cache;
+    pub static mut slab_mutex: bindings::mutex;
+    pub static mut slub_debug_enabled: bindings::static_key_false;
+    pub static mut kmalloc_caches: *mut bindings::kmem_buckets;
+    pub static mut slab_state: slab_state_t;
+    pub static mut kmem_buckets_cache: *mut kmem_cache;
     pub static mut kmalloc_size_index: [u8; 24];
 
 
@@ -569,7 +593,7 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn stack_depot_init();
     pub fn mutex_unlock(m: *const bindings::mutex);
     pub fn mutex_lock(m: *const bindings::mutex);
-    pub fn static_key_enable(key: *mut bindings::static_key);
+    pub fn static_key_enable(key: *mut bindings::static_key_false);
     pub fn kstrdup_const(s: *const c_char, gfp: gfp_t) -> *const c_char;
     pub fn __kmem_cache_alias(name: *const c_char, size: u32, align: u32,
                               flags: slab_flags_t, ctor: *const c_void) -> *mut kmem_cache;
@@ -623,43 +647,33 @@ pub extern "C" fn find_mergeable(size: u32, mut align: u32, mut flags: slab_flag
         return core::ptr::null_mut();
     }
 
-    let s: *mut kmem_cache = slab_caches.prev;
-    while s != slab_caches {
+    let mut s: *mut kmem_cache = unsafe { slab_caches.prev as *mut kmem_cache };
+    while s != addr_of_mut!(slab_caches) as *mut kmem_cache {
         if slab_unmergeable(s) != 0 {
-            unsafe {
-                s = (*s).prev;
-            }
+            unsafe { s = (*s).list.prev as *mut kmem_cache;}
             continue;
         }
 
-        if size > s.size {
-            unsafe {
-                s = (*s).prev;
-            }
+        if size > unsafe {(*s).size} {
+            unsafe { s = (*s).list.prev as *mut kmem_cache;}
             continue;
         }
 
-        if (flags & SLAB_MERGE_SAME) != ((*s).flags & SLAB_MERGE_SAME) {
-            unsafe {
-                s = (*s).prev;
-            }
+        if (flags & SLAB_MERGE_SAME) != unsafe {(*s).flags & SLAB_MERGE_SAME} {
+            unsafe { s = (*s).list.prev as *mut kmem_cache;}
             continue;
         }
         /*
         * Check if alignment is compatible.
         * Courtesy of Adrian Drzewiecki
         */
-        if ((*s).size & !(align - 1)) != s.size {
-            unsafe {
-                s = (*s).prev;
-            }
+        if unsafe { (*s).size & !(align - 1) != (*s).size } {
+            unsafe { s = (*s).list.prev as *mut kmem_cache;}
             continue;
         }
 
-        if (*s).size - size >= core::mem::size_of::<*const ()>() as u32 {
-            unsafe {
-                s = (*s).prev;
-            }
+        if unsafe { (*s).size } - size >= core::mem::size_of::<*const ()>() as u32 {
+            unsafe { s = (*s).list.prev as *mut kmem_cache;}
             continue;
         }
 
@@ -674,7 +688,7 @@ fn create_cache(name: *const c_char,
     object_size: u32, align: u32,
     flags: slab_flags_t, useroffset: u32,
     usersize: u32, ctor: *mut c_void,
-    root_cache: *const kmem_cache) -> *mut kmem_cache
+    _root_cache: *const kmem_cache) -> *mut kmem_cache
 {
     
 
@@ -689,24 +703,28 @@ fn create_cache(name: *const c_char,
     // kmem_cache_alloc(_k, (_flags)|__GFP_ZERO)
     // The hook is need, but annoyting see <linux/alloc_tag.h>
     // TODO: what to do with alloc_hooks
-    let mut s: *mut kmem_cache = core::ptr::null_mut();
+    let s: *mut kmem_cache;
     unsafe {
         s = kmem_cache_alloc_noprof(kmem_cache_obj, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
     }
     if s != core::ptr::null_mut() {
         return err as *mut kmem_cache
     }
-    (*s).name = name;
-    (*s).object_size = object_size;
-    (*s).size = object_size;
-    (*s).align = align;
-    (*s).ctor = ctor;
+    unsafe {
+        (*s).name = name;
+        (*s).object_size = object_size;
+        (*s).size = object_size;
+        (*s).align = align;
+        (*s).ctor = ctor;
+    }
     if CONFIG_HARDENED_USERCOPY {
-        (*s).useroffset = useroffset;
-        (*s).usersize = usersize;
+        unsafe {
+            (*s).useroffset = useroffset;
+            (*s).usersize = usersize;
+        }
     }
 
-    err = __kmem_cache_create(s, flags);
+    err = unsafe {__kmem_cache_create(s, flags)};
     if err != 0 {
         unsafe {
             kmem_cache_free(kmem_cache_obj, s as *const c_void);
@@ -714,11 +732,13 @@ fn create_cache(name: *const c_char,
         return err as *mut kmem_cache
     }
 
-    (*s).refcount = 1;
-    (*slab_caches.next).prev = (*s).list;
-    (*s).list.next = slab_caches.next;
-    (*s).list.prev = &mut slab_caches;
-    slab_caches.next = &mut (*s).list;
+    unsafe {
+        (*s).refcount = 1;
+        (*slab_caches.next).prev = &mut (*s).list;
+        (*s).list.next = slab_caches.next;
+        (*s).list.prev = addr_of_mut!(slab_caches);
+        slab_caches.next = &mut (*s).list;
+    }
     return s;
 }
 
@@ -752,8 +772,8 @@ fn create_cache(name: *const c_char,
  */
  
 fn kmem_cache_create_usercopy(name: *const c_char,
-           size: u32, align: u32, flags: slab_flags_t,
-           useroffset: u32, usersize: u32,
+           size: u32, align: u32, mut flags: slab_flags_t,
+           mut useroffset: u32, mut usersize: u32,
            ctor: *mut c_void) -> *mut kmem_cache
  {
     let mut s: *mut kmem_cache = core::ptr::null_mut();
@@ -768,7 +788,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
         */
         if flags & SLAB_DEBUG_FLAGS != 0 {
             unsafe {
-                static_key_enable(&mut slub_debug_enabled);
+                static_key_enable(addr_of_mut!(slub_debug_enabled));
             }
         }
         if flags & SLAB_STORE_USER != 0 {
@@ -779,13 +799,12 @@ fn kmem_cache_create_usercopy(name: *const c_char,
     }
  
     unsafe {
-        mutex_lock(&slab_mutex);
+        mutex_lock(addr_of!(slab_mutex));
     }
-     let mut err: i32 = 0;
-     err = kmem_cache_sanity_check(name, size);
+     let mut err: i32 = kmem_cache_sanity_check(name, size);
      if err != 0 {
         unsafe {
-            mutex_unlock(&slab_mutex);
+            mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
                 panic!(
@@ -804,7 +823,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
      if flags & !SLAB_FLAGS_PERMITTED != 0 {
          err = -(EINVAL as i32);
          unsafe {
-            mutex_unlock(&slab_mutex);
+            mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
                 panic!(
@@ -842,7 +861,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
      }
      if s != core::ptr::null_mut() {
         unsafe {
-            mutex_unlock(&slab_mutex);
+            mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
                 panic!(
@@ -857,11 +876,11 @@ fn kmem_cache_create_usercopy(name: *const c_char,
         }
     }
  
-     let cache_name: *const c_char = kstrdup_const(name, gfp_t::GFP_KERNEL);
+     let cache_name: *const c_char = unsafe {kstrdup_const(name, gfp_t::GFP_KERNEL)};
      if cache_name != core::ptr::null_mut() {
          err = -(ENOMEM as i32);
          unsafe {
-            mutex_unlock(&slab_mutex);
+            mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
                 panic!(
@@ -887,7 +906,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
      }
      if err != 0 {
         unsafe {
-            mutex_unlock(&slab_mutex);
+            mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
                 panic!(
@@ -903,7 +922,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
      }
      
      unsafe {
-         mutex_unlock(&slab_mutex);
+         mutex_unlock(addr_of!(slab_mutex));
      }
      s
  }
@@ -960,10 +979,10 @@ fn kmem_cache_create_usercopy(name: *const c_char,
  * subsequent calls to kmem_buckets_alloc() will fall back to kmalloc().
  * (i.e. callers only need to check for NULL on failure.)
  */
-fn kmem_buckets_create(name: *const c_char, flags: slab_flags_t,
+fn kmem_buckets_create(name: *const c_char, mut flags: slab_flags_t,
     useroffset: u32, usersize: u32, ctor: *mut c_void) -> *mut bindings::kmem_buckets
 {
-    let mut b: *mut bindings::kmem_buckets = core::ptr::null_mut();
+    let b: *mut bindings::kmem_buckets;
     let mut idx: i32 = 0;
 
 	/*
@@ -975,7 +994,7 @@ fn kmem_buckets_create(name: *const c_char, flags: slab_flags_t,
         return 16 as *mut bindings::kmem_buckets;
     }
 
-    if kmem_buckets_cache == core::ptr::null_mut() {
+    if addr_of_mut!(kmem_buckets_cache) == core::ptr::null_mut() {
         return core::ptr::null_mut();
     }
 
@@ -983,9 +1002,9 @@ fn kmem_buckets_create(name: *const c_char, flags: slab_flags_t,
     // kmem_cache_alloc(_k, (_flags)|__GFP_ZERO)
     // The hook is need, but annoyting see <linux/alloc_tag.h>
     // TODO: what to do with alloc_hooks
-    let mut s: *mut kmem_cache = core::ptr::null_mut();
+    let mut s: *mut kmem_cache;
     unsafe {
-        b = kmem_cache_alloc_noprof(kmem_buckets_cache, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
+        b = kmem_cache_alloc_noprof(kmem_buckets_cache, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut bindings::kmem_buckets;
     }
 
     if b == core::ptr::null_mut() {
@@ -995,28 +1014,28 @@ fn kmem_buckets_create(name: *const c_char, flags: slab_flags_t,
     flags |= SLAB_NO_MERGE;
 
      while idx < (KMALLOC_SHIFT_HIGH + 1) as i32 {
-        let mut short_size: *const c_char = core::ptr::null_mut();
-        let mut cache_name: *const c_char = core::ptr::null_mut();
-        let mut cache_useroffset: u32 = 0; 
-        let mut cache_usersize: u32 = 0;
-        let mut size: u32 = 0;
+        let mut short_size: *const c_char;
+        let cache_name: *const c_char;
+        let cache_useroffset: u32; 
+        let cache_usersize: u32;
+        let size: u32;
 
-        if kmalloc_caches[bindings::kmalloc_cache_type::KMALLOC_NORMAL][idx as usize] == core::ptr::null_mut() {
+        if unsafe {(*kmalloc_caches.wrapping_add(0))[idx as usize]} == core::ptr::null_mut() {
             continue;
         }
 
-        size = kmalloc_caches[bindings::kmalloc_cache_type::KMALLOC_NORMAL][idx as usize].object_size;
+        size = unsafe{(*((*kmalloc_caches.wrapping_add(0))[idx as usize] as *mut kmem_cache)).object_size};
         if size == 0 {
             continue;
         }
 
         unsafe {
-            short_size = strchr(kmalloc_caches[bindings::kmalloc_cache_type::KMALLOC_NORMAL][idx as usize].name, '-' as i32);
+            short_size = strchr((*((*kmalloc_caches.wrapping_add(0))[idx as usize] as *mut kmem_cache)).name, '-' as i32);
         }
         if short_size == core::ptr::null_mut() {
             idx = 0;
             while idx < (KMALLOC_SHIFT_HIGH + 1) as i32 {
-                kmem_cache_destroy((*b)[idx as usize] as kmem_cache);
+                unsafe {kmem_cache_destroy((*b)[idx as usize] as *mut kmem_cache)};
                 idx += 1;
             }
             unsafe {
@@ -1032,7 +1051,7 @@ fn kmem_buckets_create(name: *const c_char, flags: slab_flags_t,
         if cache_name == core::ptr::null_mut() {
             idx = 0;
             while idx < (KMALLOC_SHIFT_HIGH + 1) as i32 {
-                kmem_cache_destroy((*b)[idx as usize] as kmem_cache);
+                unsafe {kmem_cache_destroy((*b)[idx as usize] as *mut kmem_cache)};
                 idx += 1;
             }
             unsafe {
@@ -1049,16 +1068,18 @@ fn kmem_buckets_create(name: *const c_char, flags: slab_flags_t,
             cache_useroffset = useroffset;
             cache_usersize = core::cmp::min(size - cache_useroffset, usersize);
         }
-        (*b)[idx as usize] = kmem_cache_create_usercopy(cache_name, size,
-                    0, flags, cache_useroffset,
-                    cache_usersize, ctor);
+        // This is a terrible cast
         unsafe {
+            (*b)[idx as usize] = kmem_cache_create_usercopy(cache_name, size,
+                    0, flags, cache_useroffset,
+                    cache_usersize, ctor) as *mut bindings::kmem_cache;
+                
             kfree(cache_name as *const c_void);
         }
-        if (*b)[idx as usize] == core::ptr::null_mut() {
+        if unsafe {(*b)[idx as usize]} == core::ptr::null_mut() {
             idx = 0;
             while idx < (KMALLOC_SHIFT_HIGH + 1) as i32{
-                kmem_cache_destroy((*b)[idx as usize] as kmem_cache);
+                unsafe {kmem_cache_destroy((*b)[idx as usize] as *mut kmem_cache)};
                 idx += 1;
             }
             unsafe {
@@ -1114,9 +1135,9 @@ fn slab_caches_to_rcu_destroy_workfn(work: *mut bindings::work_struct)
 	 * asynchronously.
 	 */
     unsafe {
-        mutex_lock(&slab_mutex);
-        list_splice_init(&mut slab_caches_to_rcu_destroy, &mut to_destroy);
-        mutex_unlock(&slab_mutex);
+        mutex_lock(addr_of!(slab_mutex));
+        list_splice_init(addr_of_mut!(slab_caches_to_rcu_destroy), &mut to_destroy);
+        mutex_unlock(addr_of!(slab_mutex));
 
         if list_empty(&to_destroy) != 0 {
             return;
@@ -1125,9 +1146,9 @@ fn slab_caches_to_rcu_destroy_workfn(work: *mut bindings::work_struct)
         rcu_barrier();
     }
 
-    let mut s: *mut kmem_cache = to_destroy.next.sub(offsetof!(*mut kmem_cache, list)) as *mut kmem_cache;
-    let mut s2: *mut kmem_cache = unsafe{(*s).member.nex.sub(offsetof!(*mut kmem_cache, list)) as *mut kmem_cache};
-    while unsafe {&(*s).member != &to_destroy} {
+    let mut s: *mut kmem_cache = unsafe{to_destroy.next.sub(offsetof!(*mut kmem_cache, list)) as *mut kmem_cache};
+    let mut s2: *mut kmem_cache = unsafe{(*s).list.next.sub(offsetof!(*mut kmem_cache, list)) as *mut kmem_cache};
+    while unsafe {&(*s).list as *const bindings::list_head != &to_destroy as *const bindings::list_head} {
         unsafe {
             debugfs_slab_release(s);
             kfence_shutdown_cache(s);
@@ -1136,7 +1157,7 @@ fn slab_caches_to_rcu_destroy_workfn(work: *mut bindings::work_struct)
 
         s = s2;
         unsafe {
-            s2 = (*s).member.next.sub(offsetof!(*mut kmem_cache, list)) as *mut kmem_cache;
+            s2 = (*s).list.next.sub(offsetof!(*mut kmem_cache, list)) as *mut kmem_cache;
         }
     }
 }
@@ -1152,12 +1173,12 @@ fn shutdown_cache(s: *mut kmem_cache) -> i32
         }
     }
 
-	list_del(&mut (*s).list);
+	list_del(&mut unsafe {(*s).list});
 
-	if (*s).flags & SLAB_TYPESAFE_BY_RCU != 0 {
-		list_add_tail(&mut (*s).list, &mut slab_caches_to_rcu_destroy);
+	if unsafe {(*s).flags} & SLAB_TYPESAFE_BY_RCU != 0 {
         unsafe {
-		    schedule_work(&mut slab_caches_to_rcu_destroy_work);
+		    list_add_tail(&mut (*s).list, addr_of_mut!(slab_caches_to_rcu_destroy));
+		    schedule_work(addr_of_mut!(slab_caches_to_rcu_destroy_work));
         }
 	} else {
         unsafe {
@@ -1181,17 +1202,17 @@ fn slab_kmem_cache_release(s: *mut kmem_cache)
 fn kmem_cache_destroy(s: *mut kmem_cache)
 {
 	let mut err: i32 = -(EBUSY as i32);
-	let rcu_set: bool = (*s).flags & SLAB_TYPESAFE_BY_RCU != 0;
+	let rcu_set: bool = unsafe {(*s).flags & SLAB_TYPESAFE_BY_RCU != 0};
 
     unsafe {
         cpus_read_lock();
-        mutex_lock(&slab_mutex);
+        mutex_lock(addr_of!(slab_mutex));
     }
 
-	(*s).refcount -= 1;
-	if (*s).refcount != 0 {
+	unsafe{(*s).refcount -= 1;}
+	if unsafe {(*s).refcount != 0} {
         unsafe {
-            mutex_unlock(&slab_mutex);
+            mutex_unlock(addr_of!(slab_mutex));
             cpus_read_unlock();
         }
         if err == 0 && !rcu_set {
@@ -1203,7 +1224,7 @@ fn kmem_cache_destroy(s: *mut kmem_cache)
 	err = shutdown_cache(s);
 
     unsafe {
-        mutex_unlock(&slab_mutex);
+        mutex_unlock(addr_of!(slab_mutex));
         cpus_read_unlock();
     }
     if err == 0 && !rcu_set {
@@ -1236,7 +1257,7 @@ fn kmem_cache_destroy(s: *mut kmem_cache)
  }
 
 
-fn kmem_obj_info(kpp: *mut bindings::kmem_object_info, object: *mut c_void, slab: *mut slab)
+fn kmem_obj_info(kpp: *mut kmem_object_info, object: *mut c_void, slab: *mut slab)
 {
     unsafe {
         if __kfence_obj_info(kpp, object, slab) {
@@ -1263,15 +1284,24 @@ fn kmem_obj_info(kpp: *mut bindings::kmem_object_info, object: *mut c_void, slab
  */
 fn kmem_dump_obj(object: *mut c_void) -> bool
 {
-	let cp: *const c_char = b"/vmalloc\0".as_ptr() as *const c_char;
-	let mut i = 0;
+	let _cp: *const c_char = b"/vmalloc\0".as_ptr() as *const c_char;
+	let _i = 0;
 	let mut slab: *mut slab = core::ptr::null_mut();
-	let mut ptroffset: u32 = 0;
-	let kp: bindings::kmem_obj_info = { };
+	let _ptroffset: u32 = 0;
+	let _kp: kmem_object_info = kmem_object_info { 
+        kp_ptr: core::ptr::null_mut() as *mut c_void,
+        kp_slab: core::ptr::null_mut() as *mut slab,
+        kp_objp: core::ptr::null_mut() as *mut c_void,
+        kp_data_offset: 0,
+        kp_slab_cache: core::ptr::null_mut() as *mut kmem_cache,
+        kp_ret: core::ptr::null_mut() as *mut c_void,
+        kp_stack: [core::ptr::null_mut(); KS_ADDRS_COUNT],
+        kp_free_stack: [core::ptr::null_mut(); KS_ADDRS_COUNT],
+    };
 
     // #define virt_addr_valid(kaddr)	pfn_valid((__pa(kaddr) >> PAGE_SHIFT))
 	/* Some arches consider ZERO_SIZE_PTR to be a valid address. */
-	if object < PAGE_SIZE as *mut c_void || pfn_valid((object as u32) >> PAGE_SHIFT) == 0 {
+	if object < PAGE_SIZE as *mut c_void || unsafe {pfn_valid((object as u32) >> PAGE_SHIFT)} == 0 {
 		return false;
     }
     unsafe {
@@ -1386,19 +1416,19 @@ fn create_kmalloc_cache(name: *const c_char,
     // kmem_cache_alloc(_k, (_flags)|__GFP_ZERO)
     // The hook is need, but annoyting see <linux/alloc_tag.h>
     // TODO: what to do with alloc_hooks
-    let mut s: *mut kmem_cache = core::ptr::null_mut();
+    let s: *mut kmem_cache;
     unsafe {
         s = kmem_cache_alloc_noprof(kmem_cache_obj, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
     }
 
 	if s == core::ptr::null_mut() {
-		panic!("Out of memory when creating slab {}\n", CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"));
+		panic!("Out of memory when creating slab {}\n", unsafe {CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>")});
     }
 
 	create_boot_cache(s, name, size, flags | SLAB_KMALLOC, 0, size);
-	list_add(&mut (*s).list as *const bindings::list_head, (&slab_caches) as *const bindings::list_head);
-	(*s).refcount = 1;
-	s
+	unsafe {list_add(&mut (*s).list as *mut bindings::list_head, addr_of_mut!(slab_caches) as *mut bindings::list_head)};
+	unsafe {(*s).refcount = 1};
+	return s;
 }
 
 #[no_mangle]
