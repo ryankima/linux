@@ -432,7 +432,7 @@ $(obj)/kernel.o: $(src)/kernel/lib.rs $(obj)/alloc.o $(obj)/build_error.o \
 $(obj)/slab_common.o: private rustc_target_flags = --extern alloc \
     --extern build_error --extern macros --extern bindings
 $(obj)/slab_common.o: $(src)/mm/slab_common.rs $(obj)/alloc.o \
-	$(obj)/bindings.o $(obj)/compiler_builtins.o FORCE
+	$(obj)/bindings.o FORCE
 	+$(call if_changed_rule,rustc_library)
 
 endif # CONFIG_RUST

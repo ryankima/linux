@@ -66,16 +66,21 @@ typedef struct page *pgtable_t;
 
 #ifdef USE_48_BIT_KSEG
 #define PAGE_OFFSET		0xffff800000000000UL
+#pragma message "Page offset kseg 1"
+
 #else
 #define PAGE_OFFSET		0xfffffc0000000000UL
+#pragma message "Page offset kseg 1 not"
 #endif
 
 #else
 
 #ifdef USE_48_BIT_KSEG
 #define PAGE_OFFSET		0xffff800000000000
+#pragma message "Page offset kseg 2"
 #else
 #define PAGE_OFFSET		0xfffffc0000000000
+#pragma message "Page offset kseg 2 not"
 #endif
 
 #endif /* !__ASSEMBLY__ */

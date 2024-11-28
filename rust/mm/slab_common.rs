@@ -286,16 +286,17 @@ enum _slab_flag_bits {
 	_SLAB_FLAGS_LAST_BIT
 }
 
+#[repr(C)]
 #[allow(non_camel_case_types)]
 #[derive(PartialEq, PartialOrd)]
-enum slab_state_t {
+pub enum slab_state_t {
 	DOWN,			/* No slab functionality yet */
 	PARTIAL,		/* SLUB: kmem_cache_node available */
 	UP,			/* Slab caches usable but not all extras yet */
 	FULL			/* Everything is working */
 }
 
-const slab_nomerge: bool = false; // TODO: check if this is actually false
+const slab_nomerge: bool = true; // TODO: check if this is actually false
 const SLAB_HWCACHE_ALIGN: u32 = 1 << (_slab_flag_bits::_SLAB_HWCACHE_ALIGN as u32);
 const SLAB_RED_ZONE: u32 = 1 << (_slab_flag_bits::_SLAB_RED_ZONE as u32);
 const SLAB_POISON: u32 = 1 << (_slab_flag_bits::_SLAB_POISON as u32);
@@ -577,15 +578,15 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub static mut slab_caches: bindings::list_head;
     pub static mut slab_caches_to_rcu_destroy: bindings::list_head;
     pub static mut slab_caches_to_rcu_destroy_work: bindings::work_struct;
-    pub static mut kmem_cache_obj: *mut kmem_cache;
+    pub static mut kmem_cache: *mut kmem_cache;
     pub static mut slab_mutex: bindings::mutex;
     pub static mut slub_debug_enabled: bindings::static_key_false;
-    pub static mut kmalloc_caches: *mut bindings::kmem_buckets;
+    pub static mut kmalloc_caches: [bindings::kmem_buckets; 4];
     pub static mut slab_state: slab_state_t;
     pub static mut kmem_buckets_cache: *mut kmem_cache;
     pub static mut kmalloc_size_index: [u8; 24];
 
-
+    pub fn panic(fmt: *const c_char, ...);
     pub fn kmem_cache_alloc_noprof(cachep: *const kmem_cache, flags: gfp_t) -> *mut core::ffi::c_void;
     pub fn __kmem_cache_create(cache: *mut kmem_cache, flags: slab_flags_t) -> u32;
     pub fn kmem_cache_free(s: *mut kmem_cache, objp: *const c_void);
@@ -622,16 +623,20 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn cpus_read_unlock();
     pub fn get_order(s: u32) -> i32;
     pub fn kmalloc_slab(size: usize, b: *mut bindings::kmem_buckets, flags: gfp_t, caller: u32) -> *mut kmem_cache;
+
+    // TODO: Remove these later
+    pub fn kmem_cache_destroy(s: *mut kmem_cache);
 }
 
 #[no_mangle]
 pub extern "C" fn find_mergeable(size: u32, mut align: u32, mut flags: slab_flags_t,
                                  name: *const c_char, ctor: *const c_void) -> *mut kmem_cache
 {
-
     if slab_nomerge {
         return core::ptr::null_mut();
     }
+
+    // TODO: below might be cooked
 
     if ctor != core::ptr::null() {
         return core::ptr::null_mut();
@@ -683,8 +688,8 @@ pub extern "C" fn find_mergeable(size: u32, mut align: u32, mut flags: slab_flag
     return core::ptr::null_mut();
 }
 
-
-fn create_cache(name: *const c_char,
+#[no_mangle]
+pub extern "C" fn create_cache(name: *const c_char,
     object_size: u32, align: u32,
     flags: slab_flags_t, useroffset: u32,
     usersize: u32, ctor: *mut c_void,
@@ -705,9 +710,9 @@ fn create_cache(name: *const c_char,
     // TODO: what to do with alloc_hooks
     let s: *mut kmem_cache;
     unsafe {
-        s = kmem_cache_alloc_noprof(kmem_cache_obj, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
+        s = kmem_cache_alloc_noprof(kmem_cache, core::mem::transmute(Gfp::GFP_KERNEL as u32 | 0x80)) as *mut kmem_cache;
     }
-    if s != core::ptr::null_mut() {
+    if s == core::ptr::null_mut() {
         return err as *mut kmem_cache
     }
     unsafe {
@@ -727,7 +732,7 @@ fn create_cache(name: *const c_char,
     err = unsafe {__kmem_cache_create(s, flags)};
     if err != 0 {
         unsafe {
-            kmem_cache_free(kmem_cache_obj, s as *const c_void);
+            kmem_cache_free(kmem_cache, s as *const c_void);
         }
         return err as *mut kmem_cache
     }
@@ -770,8 +775,8 @@ fn create_cache(name: *const c_char,
  *
  * Return: a pointer to the cache on success, NULL on failure.
  */
- 
-fn kmem_cache_create_usercopy(name: *const c_char,
+ #[no_mangle]
+pub extern "C" fn kmem_cache_create_usercopy(name: *const c_char,
            size: u32, align: u32, mut flags: slab_flags_t,
            mut useroffset: u32, mut usersize: u32,
            ctor: *mut c_void) -> *mut kmem_cache
@@ -807,10 +812,11 @@ fn kmem_cache_create_usercopy(name: *const c_char,
             mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
-                panic!(
-                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
-                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
-                );
+                panic("kmem_cache_create_usercopy: Failed to create slab".as_ptr() as *const i8);
+                // panic!(
+                //     "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
+                //     CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
+                // );
             }
             else {
                 dump_stack();
@@ -826,10 +832,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
             mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
-                panic!(
-                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
-                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
-                );
+                panic("kmem_cache_create_usercopy: Failed to create slab".as_ptr() as *const i8);
             }
             else {
                 dump_stack();
@@ -864,10 +867,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
             mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
-                panic!(
-                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
-                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
-                );
+                panic("kmem_cache_create_usercopy: Failed to create slab".as_ptr() as *const i8);
             }
             else {
                 dump_stack();
@@ -877,16 +877,13 @@ fn kmem_cache_create_usercopy(name: *const c_char,
     }
  
      let cache_name: *const c_char = unsafe {kstrdup_const(name, gfp_t::GFP_KERNEL)};
-     if cache_name != core::ptr::null_mut() {
+     if cache_name == core::ptr::null_mut() {
          err = -(ENOMEM as i32);
          unsafe {
             mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
-                panic!(
-                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
-                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
-                );
+                panic("kmem_cache_create_usercopy: Failed to create slab".as_ptr() as *const i8);
             }
             else {
                 dump_stack();
@@ -909,10 +906,7 @@ fn kmem_cache_create_usercopy(name: *const c_char,
             mutex_unlock(addr_of!(slab_mutex));
 
             if flags & SLAB_PANIC != 0 {
-                panic!(
-                    "kmem_cache_create_usercopy: Failed to create slab '{}'. Error {}\n",
-                    CStr::from_ptr(name).to_str().unwrap_or("<invalid UTF-8>"), err
-                );
+                panic("kmem_cache_create_usercopy: Failed to create slab".as_ptr() as *const i8);
             }
             else {
                 dump_stack();
@@ -926,6 +920,8 @@ fn kmem_cache_create_usercopy(name: *const c_char,
      }
      s
  }
+
+ 
 
  /**
  * kmem_cache_create - Create a cache.
@@ -953,7 +949,8 @@ fn kmem_cache_create_usercopy(name: *const c_char,
  * Return: a pointer to the cache on success, NULL on failure.
  */
 
- fn kmem_cache_create(name: *const c_char,
+ #[no_mangle]
+ pub extern "C" fn kmem_cache_create(name: *const c_char,
     size: u32, align: u32, flags: slab_flags_t,
     ctor: *mut c_void) -> *mut kmem_cache
 {
@@ -979,7 +976,8 @@ fn kmem_cache_create_usercopy(name: *const c_char,
  * subsequent calls to kmem_buckets_alloc() will fall back to kmalloc().
  * (i.e. callers only need to check for NULL on failure.)
  */
-fn kmem_buckets_create(name: *const c_char, mut flags: slab_flags_t,
+ #[no_mangle]
+pub extern "C" fn kmem_buckets_create(name: *const c_char, mut flags: slab_flags_t,
     useroffset: u32, usersize: u32, ctor: *mut c_void) -> *mut bindings::kmem_buckets
 {
     let b: *mut bindings::kmem_buckets;
@@ -1012,6 +1010,7 @@ fn kmem_buckets_create(name: *const c_char, mut flags: slab_flags_t,
     }
 
     flags |= SLAB_NO_MERGE;
+    
 
      while idx < (KMALLOC_SHIFT_HIGH + 1) as i32 {
         let mut short_size: *const c_char;
@@ -1019,18 +1018,20 @@ fn kmem_buckets_create(name: *const c_char, mut flags: slab_flags_t,
         let cache_useroffset: u32; 
         let cache_usersize: u32;
         let size: u32;
-
-        if unsafe {(*kmalloc_caches.wrapping_add(0))[idx as usize]} == core::ptr::null_mut() {
+        
+        if unsafe {kmalloc_caches[0][idx as usize].is_null()} {
+            idx += 1;
             continue;
         }
-
-        size = unsafe{(*((*kmalloc_caches.wrapping_add(0))[idx as usize] as *mut kmem_cache)).object_size};
+        size = unsafe{(*(kmalloc_caches[0][idx as usize] as *mut kmem_cache)).object_size};
         if size == 0 {
+            idx += 1;
             continue;
         }
+        
 
         unsafe {
-            short_size = strchr((*((*kmalloc_caches.wrapping_add(0))[idx as usize] as *mut kmem_cache)).name, '-' as i32);
+            short_size = strchr((*(kmalloc_caches[0][idx as usize] as *mut kmem_cache)).name, '-' as i32);
         }
         if short_size == core::ptr::null_mut() {
             idx = 0;
@@ -1093,6 +1094,7 @@ fn kmem_buckets_create(name: *const c_char, mut flags: slab_flags_t,
  b
 }
 
+/*
 /*
  * For a given kmem_cache, kmem_cache_destroy() should only be called
  * once or there will be a use-after-free problem. The actual deletion
@@ -1805,7 +1807,7 @@ extern "C" fn kmalloc_size_roundup(size: usize) -> usize {
  
      return kfence_ksize(objp) ?: __ksize(objp);
  }*/
-
+*/
 #[no_mangle]
 pub extern "C" fn kmem_cache_size(s: *const kmem_cache) -> u32 {
     unsafe {

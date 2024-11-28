@@ -139,110 +139,114 @@ EXPORT_SYMBOL(calculate_alignment);
 /*
  * Find a mergeable slab cache
  */
-int slab_unmergeable(struct kmem_cache *s)
-{
-	if (slab_nomerge || (s->flags & SLAB_NEVER_MERGE))
-		return 1;
+ 
+ extern int slab_unmergeable(struct kmem_cache *s);
+// int slab_unmergeable(struct kmem_cache *s)
+// {
+// 	if (slab_nomerge || (s->flags & SLAB_NEVER_MERGE))
+// 		return 1;
 
-	if (s->ctor)
-		return 1;
+// 	if (s->ctor)
+// 		return 1;
 
-#ifdef CONFIG_HARDENED_USERCOPY
-	if (s->usersize)
-		return 1;
-#endif
+// #ifdef CONFIG_HARDENED_USERCOPY
+// 	if (s->usersize)
+// 		return 1;
+// #endif
 
-	/*
-	 * We may have set a slab to be unmergeable during bootstrap.
-	 */
-	if (s->refcount < 0)
-		return 1;
+// 	/*
+// 	 * We may have set a slab to be unmergeable during bootstrap.
+// 	 */
+// 	if (s->refcount < 0)
+// 		return 1;
 
-	return 0;
-}
+// 	return 0;
+// }
 
-struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
-		slab_flags_t flags, const char *name, void (*ctor)(void *))
-{
-	struct kmem_cache *s;
+extern struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
+ 		slab_flags_t flags, const char *name, void (*ctor)(void *));
+// struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
+// 		slab_flags_t flags, const char *name, void (*ctor)(void *))
+// {
+// 	struct kmem_cache *s;
 
-	if (slab_nomerge)
-		return NULL;
+// 	if (slab_nomerge)
+// 		return NULL;
 
-	if (ctor)
-		return NULL;
+// 	if (ctor)
+// 		return NULL;
 
-	size = ALIGN(size, sizeof(void *));
-	align = calculate_alignment(flags, align, size);
-	size = ALIGN(size, align);
-flags = kmem_cache_flags(flags, name);
+// 	size = ALIGN(size, sizeof(void *));
+// 	align = calculate_alignment(flags, align, size);
+// 	size = ALIGN(size, align);
+// flags = kmem_cache_flags(flags, name);
 
-	if (flags & SLAB_NEVER_MERGE)
-		return NULL;
+// 	if (flags & SLAB_NEVER_MERGE)
+// 		return NULL;
 
-	list_for_each_entry_reverse(s, &slab_caches, list) {
-		if (slab_unmergeable(s))
-			continue;
+// 	list_for_each_entry_reverse(s, &slab_caches, list) {
+// 		if (slab_unmergeable(s))
+// 			continue;
 
-		if (size > s->size)
-			continue;
+// 		if (size > s->size)
+// 			continue;
 
-		if ((flags & SLAB_MERGE_SAME) != (s->flags & SLAB_MERGE_SAME))
-			continue;
-		/*
-		 * Check if alignment is compatible.
-		 * Courtesy of Adrian Drzewiecki
-		 */
-		if ((s->size & ~(align - 1)) != s->size)
-			continue;
+// 		if ((flags & SLAB_MERGE_SAME) != (s->flags & SLAB_MERGE_SAME))
+// 			continue;
+// 		/*
+// 		 * Check if alignment is compatible.
+// 		 * Courtesy of Adrian Drzewiecki
+// 		 */
+// 		if ((s->size & ~(align - 1)) != s->size)
+// 			continue;
 
-		if (s->size - size >= sizeof(void *))
-			continue;
+// 		if (s->size - size >= sizeof(void *))
+// 			continue;
 
-		return s;
-	}
-	return NULL;
-}
+// 		return s;
+// 	}
+// 	return NULL;
+// }
 
-static struct kmem_cache *create_cache(const char *name,
+extern struct kmem_cache *create_cache(const char *name,
 		unsigned int object_size, unsigned int align,
 		slab_flags_t flags, unsigned int useroffset,
 		unsigned int usersize, void (*ctor)(void *),
-		struct kmem_cache *root_cache)
-{
-	struct kmem_cache *s;
-	int err;
+		struct kmem_cache *root_cache);
+// {
+// 	struct kmem_cache *s;
+// 	int err;
 
-	if (WARN_ON(useroffset + usersize > object_size))
-		useroffset = usersize = 0;
+// 	if (WARN_ON(useroffset + usersize > object_size))
+// 		useroffset = usersize = 0;
 
-	err = -ENOMEM;
-	s = kmem_cache_zalloc(kmem_cache, GFP_KERNEL);
-	if (!s)
-		goto out;
+// 	err = -ENOMEM;
+// 	s = kmem_cache_zalloc(kmem_cache, GFP_KERNEL);
+// 	if (!s)
+// 		goto out;
 
-	s->name = name;
-	s->size = s->object_size = object_size;
-	s->align = align;
-	s->ctor = ctor;
-#ifdef CONFIG_HARDENED_USERCOPY
-	s->useroffset = useroffset;
-	s->usersize = usersize;
-#endif
+// 	s->name = name;
+// 	s->size = s->object_size = object_size;
+// 	s->align = align;
+// 	s->ctor = ctor;
+// #ifdef CONFIG_HARDENED_USERCOPY
+// 	s->useroffset = useroffset;
+// 	s->usersize = usersize;
+// #endif
 
-	err = __kmem_cache_create(s, flags);
-	if (err)
-		goto out_free_cache;
+// 	err = __kmem_cache_create(s, flags);
+// 	if (err)
+// 		goto out_free_cache;
 
-	s->refcount = 1;
-	list_add(&s->list, &slab_caches);
-	return s;
+// 	s->refcount = 1;
+// 	list_add(&s->list, &slab_caches);
+// 	return s;
 
-out_free_cache:
-	kmem_cache_free(kmem_cache, s);
-out:
-	return ERR_PTR(err);
-}
+// out_free_cache:
+// 	kmem_cache_free(kmem_cache, s);
+// out:
+// 	return ERR_PTR(err);
+// }
 
 /**
  * kmem_cache_create_usercopy - Create a cache with a region suitable
@@ -272,93 +276,93 @@ out:
  *
  * Return: a pointer to the cache on success, NULL on failure.
  */
-struct kmem_cache *
+extern struct kmem_cache *
 kmem_cache_create_usercopy(const char *name,
 		  unsigned int size, unsigned int align,
 		  slab_flags_t flags,
 		  unsigned int useroffset, unsigned int usersize,
-		  void (*ctor)(void *))
-{
-	struct kmem_cache *s = NULL;
-	const char *cache_name;
-	int err;
+		  void (*ctor)(void *));
+// {
+// 	struct kmem_cache *s = NULL;
+// 	const char *cache_name;
+// 	int err;
 
-#ifdef CONFIG_SLUB_DEBUG
-	/*
-	 * If no slab_debug was enabled globally, the static key is not yet
-	 * enabled by setup_slub_debug(). Enable it if the cache is being
-	 * created with any of the debugging flags passed explicitly.
-	 * It's also possible that this is the first cache created with
-	 * SLAB_STORE_USER and we should init stack_depot for it.
-	 */
-	if (flags & SLAB_DEBUG_FLAGS)
-		static_branch_enable(&slub_debug_enabled);
-	if (flags & SLAB_STORE_USER)
-		stack_depot_init();
-#endif
+// #ifdef CONFIG_SLUB_DEBUG
+// 	/*
+// 	 * If no slab_debug was enabled globally, the static key is not yet
+// 	 * enabled by setup_slub_debug(). Enable it if the cache is being
+// 	 * created with any of the debugging flags passed explicitly.
+// 	 * It's also possible that this is the first cache created with
+// 	 * SLAB_STORE_USER and we should init stack_depot for it.
+// 	 */
+// 	if (flags & SLAB_DEBUG_FLAGS)
+// 		static_branch_enable(&slub_debug_enabled);
+// 	if (flags & SLAB_STORE_USER)
+// 		stack_depot_init();
+// #endif
 
-	mutex_lock(&slab_mutex);
+// 	mutex_lock(&slab_mutex);
 
-	err = kmem_cache_sanity_check(name, size);
-	if (err) {
-		goto out_unlock;
-	}
+// 	err = kmem_cache_sanity_check(name, size);
+// 	if (err) {
+// 		goto out_unlock;
+// 	}
 
-	/* Refuse requests with allocator specific flags */
-	if (flags & ~SLAB_FLAGS_PERMITTED) {
-		err = -EINVAL;
-		goto out_unlock;
-	}
+// 	/* Refuse requests with allocator specific flags */
+// 	if (flags & ~SLAB_FLAGS_PERMITTED) {
+// 		err = -EINVAL;
+// 		goto out_unlock;
+// 	}
 
-	/*
-	 * Some allocators will constraint the set of valid flags to a subset
-	 * of all flags. We expect them to define CACHE_CREATE_MASK in this
-	 * case, and we'll just provide them with a sanitized version of the
-	 * passed flags.
-	 */
-	flags &= CACHE_CREATE_MASK;
+// 	/*
+// 	 * Some allocators will constraint the set of valid flags to a subset
+// 	 * of all flags. We expect them to define CACHE_CREATE_MASK in this
+// 	 * case, and we'll just provide them with a sanitized version of the
+// 	 * passed flags.
+// 	 */
+// 	flags &= CACHE_CREATE_MASK;
 
-	/* Fail closed on bad usersize of useroffset values. */
-	if (!IS_ENABLED(CONFIG_HARDENED_USERCOPY) ||
-	    WARN_ON(!usersize && useroffset) ||
-	    WARN_ON(size < usersize || size - usersize < useroffset))
-		usersize = useroffset = 0;
+// 	/* Fail closed on bad usersize of useroffset values. */
+// 	if (!IS_ENABLED(CONFIG_HARDENED_USERCOPY) ||
+// 	    WARN_ON(!usersize && useroffset) ||
+// 	    WARN_ON(size < usersize || size - usersize < useroffset))
+// 		usersize = useroffset = 0;
 
-	if (!usersize)
-		s = __kmem_cache_alias(name, size, align, flags, ctor);
-	if (s)
-		goto out_unlock;
+// 	if (!usersize)
+// 		s = __kmem_cache_alias(name, size, align, flags, ctor);
+// 	if (s)
+// 		goto out_unlock;
 
-	cache_name = kstrdup_const(name, GFP_KERNEL);
-	if (!cache_name) {
-		err = -ENOMEM;
-		goto out_unlock;
-	}
+// 	cache_name = kstrdup_const(name, GFP_KERNEL);
+// 	if (!cache_name) {
+// 		err = -ENOMEM;
+// 		goto out_unlock;
+// 	}
 
-	s = create_cache(cache_name, size,
-			 calculate_alignment(flags, align, size),
-			 flags, useroffset, usersize, ctor, NULL);
-	if (IS_ERR(s)) {
-		err = PTR_ERR(s);
-		kfree_const(cache_name);
-	}
+// 	s = create_cache(cache_name, size,
+// 			 calculate_alignment(flags, align, size),
+// 			 flags, useroffset, usersize, ctor, NULL);
+// 	if (IS_ERR(s)) {
+// 		err = PTR_ERR(s);
+// 		kfree_const(cache_name);
+// 	}
 
-out_unlock:
-	mutex_unlock(&slab_mutex);
+// out_unlock:
+// 	mutex_unlock(&slab_mutex);
 
-	if (err) {
-		if (flags & SLAB_PANIC)
-			panic("%s: Failed to create slab '%s'. Error %d\n",
-				__func__, name, err);
-		else {
-			pr_warn("%s(%s) failed with error %d\n",
-				__func__, name, err);
-			dump_stack();
-		}
-		return NULL;
-	}
-	return s;
-}
+// 	if (err) {
+// 		if (flags & SLAB_PANIC)
+// 			panic("%s: Failed to create slab '%s'. Error %d\n",
+// 				__func__, name, err);
+// 		else {
+// 			pr_warn("%s(%s) failed with error %d\n",
+// 				__func__, name, err);
+// 			dump_stack();
+// 		}
+// 		return NULL;
+// 	}
+// 	return s;
+// }
 EXPORT_SYMBOL(kmem_cache_create_usercopy);
 
 /**
@@ -386,16 +390,16 @@ EXPORT_SYMBOL(kmem_cache_create_usercopy);
  *
  * Return: a pointer to the cache on success, NULL on failure.
  */
-struct kmem_cache *
+extern struct kmem_cache *
 kmem_cache_create(const char *name, unsigned int size, unsigned int align,
-		slab_flags_t flags, void (*ctor)(void *))
-{
-	return kmem_cache_create_usercopy(name, size, align, flags, 0, 0,
-					  ctor);
-}
+		slab_flags_t flags, void (*ctor)(void *));
+// {
+// 	return kmem_cache_create_usercopy(name, size, align, flags, 0, 0,
+// 					  ctor);
+// }
 EXPORT_SYMBOL(kmem_cache_create);
 
-static struct kmem_cache *kmem_buckets_cache __ro_after_init;
+struct kmem_cache *kmem_buckets_cache __ro_after_init;
 
 /**
  * kmem_buckets_create - Create a set of caches that handle dynamic sized
@@ -416,75 +420,75 @@ static struct kmem_cache *kmem_buckets_cache __ro_after_init;
  * subsequent calls to kmem_buckets_alloc() will fall back to kmalloc().
  * (i.e. callers only need to check for NULL on failure.)
  */
-kmem_buckets *kmem_buckets_create(const char *name, slab_flags_t flags,
+extern kmem_buckets *kmem_buckets_create(const char *name, slab_flags_t flags,
 				  unsigned int useroffset,
 				  unsigned int usersize,
-				  void (*ctor)(void *))
-{
-	kmem_buckets *b;
-	int idx;
+				  void (*ctor)(void *));
+// {
+// 	kmem_buckets *b;
+// 	int idx;
 
-	/*
-	 * When the separate buckets API is not built in, just return
-	 * a non-NULL value for the kmem_buckets pointer, which will be
-	 * unused when performing allocations.
-	 */
-	if (!IS_ENABLED(CONFIG_SLAB_BUCKETS))
-		return ZERO_SIZE_PTR;
+// 	/*
+// 	 * When the separate buckets API is not built in, just return
+// 	 * a non-NULL value for the kmem_buckets pointer, which will be
+// 	 * unused when performing allocations.
+// 	 */
+// 	if (!IS_ENABLED(CONFIG_SLAB_BUCKETS))
+// 		return ZERO_SIZE_PTR;
 
-	if (WARN_ON(!kmem_buckets_cache))
-		return NULL;
+// 	if (WARN_ON(!kmem_buckets_cache))
+// 		return NULL;
 
-	b = kmem_cache_alloc(kmem_buckets_cache, GFP_KERNEL|__GFP_ZERO);
-	if (WARN_ON(!b))
-		return NULL;
+// 	b = kmem_cache_alloc(kmem_buckets_cache, GFP_KERNEL|__GFP_ZERO);
+// 	if (WARN_ON(!b))
+// 		return NULL;
 
-	flags |= SLAB_NO_MERGE;
+// 	flags |= SLAB_NO_MERGE;
 
-	for (idx = 0; idx < ARRAY_SIZE(kmalloc_caches[KMALLOC_NORMAL]); idx++) {
-		char *short_size, *cache_name;
-		unsigned int cache_useroffset, cache_usersize;
-		unsigned int size;
+// 	for (idx = 0; idx < ARRAY_SIZE(kmalloc_caches[KMALLOC_NORMAL]); idx++) {
+// 		char *short_size, *cache_name;
+// 		unsigned int cache_useroffset, cache_usersize;
+// 		unsigned int size;
 
-		if (!kmalloc_caches[KMALLOC_NORMAL][idx])
-			continue;
+// 		if (!kmalloc_caches[KMALLOC_NORMAL][idx])
+// 			continue;
 
-		size = kmalloc_caches[KMALLOC_NORMAL][idx]->object_size;
-		if (!size)
-			continue;
+// 		size = kmalloc_caches[KMALLOC_NORMAL][idx]->object_size;
+// 		if (!size)
+// 			continue;
 
-		short_size = strchr(kmalloc_caches[KMALLOC_NORMAL][idx]->name, '-');
-		if (WARN_ON(!short_size))
-			goto fail;
+// 		short_size = strchr(kmalloc_caches[KMALLOC_NORMAL][idx]->name, '-');
+// 		if (WARN_ON(!short_size))
+// 			goto fail;
 
-		cache_name = kasprintf(GFP_KERNEL, "%s-%s", name, short_size + 1);
-		if (WARN_ON(!cache_name))
-			goto fail;
+// 		cache_name = kasprintf(GFP_KERNEL, "%s-%s", name, short_size + 1);
+// 		if (WARN_ON(!cache_name))
+// 			goto fail;
 
-		if (useroffset >= size) {
-			cache_useroffset = 0;
-			cache_usersize = 0;
-		} else {
-			cache_useroffset = useroffset;
-			cache_usersize = min(size - cache_useroffset, usersize);
-		}
-		(*b)[idx] = kmem_cache_create_usercopy(cache_name, size,
-					0, flags, cache_useroffset,
-					cache_usersize, ctor);
-		kfree(cache_name);
-		if (WARN_ON(!(*b)[idx]))
-			goto fail;
-	}
+// 		if (useroffset >= size) {
+// 			cache_useroffset = 0;
+// 			cache_usersize = 0;
+// 		} else {
+// 			cache_useroffset = useroffset;
+// 			cache_usersize = min(size - cache_useroffset, usersize);
+// 		}
+// 		(*b)[idx] = kmem_cache_create_usercopy(cache_name, size,
+// 					0, flags, cache_useroffset,
+// 					cache_usersize, ctor);
+// 		kfree(cache_name);
+// 		if (WARN_ON(!(*b)[idx]))
+// 			goto fail;
+// 	}
 
-	return b;
+// 	return b;
 
-fail:
-	for (idx = 0; idx < ARRAY_SIZE(kmalloc_caches[KMALLOC_NORMAL]); idx++)
-		kmem_cache_destroy((*b)[idx]);
-	kfree(b);
+// fail:
+// 	for (idx = 0; idx < ARRAY_SIZE(kmalloc_caches[KMALLOC_NORMAL]); idx++)
+// 		kmem_cache_destroy((*b)[idx]);
+// 	kfree(b);
 
-	return NULL;
-}
+// 	return NULL;
+// }
 EXPORT_SYMBOL(kmem_buckets_create);
 
 #ifdef SLAB_SUPPORTS_SYSFS

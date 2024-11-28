@@ -531,8 +531,10 @@ void get_slabinfo(struct kmem_cache *s, struct slabinfo *sinfo);
 
 #ifdef CONFIG_SLUB_DEBUG
 #ifdef CONFIG_SLUB_DEBUG_ON
+#pragma warn "Config slub debug on"
 DECLARE_STATIC_KEY_TRUE(slub_debug_enabled);
 #else
+#pragma warn "Config slub debug off"
 DECLARE_STATIC_KEY_FALSE(slub_debug_enabled);
 #endif
 extern void print_tracking(struct kmem_cache *s, void *object);

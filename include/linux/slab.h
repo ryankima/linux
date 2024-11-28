@@ -389,6 +389,7 @@ static inline unsigned int arch_slab_minalign(void)
                                (KMALLOC_MIN_SIZE) : 16)
 
 #ifdef CONFIG_RANDOM_KMALLOC_CACHES
+#pragma message "not CONFIG_RANDOM_KMALLOC_CACHES"
 #define RANDOM_KMALLOC_CACHES_NR	15 // # of cache copies
 #else
 #define RANDOM_KMALLOC_CACHES_NR	0
@@ -405,14 +406,17 @@ static inline unsigned int arch_slab_minalign(void)
 enum kmalloc_cache_type {
 	KMALLOC_NORMAL = 0,
 #ifndef CONFIG_ZONE_DMA
+#pragma message "not Config_zone_dma"
 	KMALLOC_DMA = KMALLOC_NORMAL,
 #endif
 #ifndef CONFIG_MEMCG
+#pragma message "not config_memcg"
 	KMALLOC_CGROUP = KMALLOC_NORMAL,
 #endif
 	KMALLOC_RANDOM_START = KMALLOC_NORMAL,
 	KMALLOC_RANDOM_END = KMALLOC_RANDOM_START + RANDOM_KMALLOC_CACHES_NR,
 #ifdef CONFIG_SLUB_TINY
+#pragma message "config_slub_tiny"
 	KMALLOC_RECLAIM = KMALLOC_NORMAL,
 #else
 	KMALLOC_RECLAIM,
@@ -429,7 +433,6 @@ enum kmalloc_cache_type {
 typedef struct kmem_cache * kmem_buckets[KMALLOC_SHIFT_HIGH + 1];
 
 extern kmem_buckets kmalloc_caches[NR_KMALLOC_TYPES];
-
 /*
  * Define gfp bits that should not be set for KMALLOC_NORMAL.
  */
