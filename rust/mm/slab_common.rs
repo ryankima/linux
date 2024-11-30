@@ -1,3 +1,4 @@
+#![no_std]
 use core::ffi::{c_void, c_char, CStr};
 use core::marker::Copy;
 use core::convert::From;
@@ -23,6 +24,7 @@ const CONFIG_SLUB_DEBUG: bool = true;
 const CONFIG_PRINTK: bool = true;
 const MAX_NUMNODES: usize = 16;
 const KS_ADDRS_COUNT: usize = 16;
+const CONFIG_RANDOM_KMALLOC_CACHES: bool = true;
 
 const EPERM: u32 =		 1;	/* Operation not permitted */
 const ENOENT: u32 =		 2;	/* No such file or directory */
@@ -260,7 +262,25 @@ pub struct kmem_object_info {
     kp_free_stack: [*mut c_void; KS_ADDRS_COUNT],
 }
 
+
+
+const KMALLOC_NORMAL: u32 = 0;
+const KMALLOC_RANDOM_START: u32 = 0; // Same as KMALLOC_NORMAL
+const KMALLOC_RANDOM_END: u32 = KMALLOC_RANDOM_START + RANDOM_KMALLOC_CACHES_NR;
+const KMALLOC_RECLAIM: u32 = KMALLOC_RANDOM_END + 1;
+const KMALLOC_DMA: u32 = KMALLOC_RANDOM_END + 2;
+const KMALLOC_CGROUP: u32 = KMALLOC_RANDOM_END + 3;
+const NR_KMALLOC_TYPES: u32 = KMALLOC_RANDOM_END + 4;
+
+#[repr(C)]
+pub struct kmalloc_info_struct {
+    pub name: [*const c_char; NR_KMALLOC_TYPES as usize], // Array of const char pointers
+    pub size: u32, // Matches `unsigned int` in C
+}
+
 // This comes from <linux/slab.h>
+#[repr(C)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[allow(non_camel_case_types)]
 enum _slab_flag_bits {
 	_SLAB_CONSISTENCY_CHECKS,
@@ -551,6 +571,44 @@ extern "C" {
 }
 
 
+fn __kmalloc_index(size: usize, size_is_constant: bool) -> u32
+{
+    if size == 0 {
+        return 0;
+    }
+
+    if size <= KMALLOC_MIN_SIZE.try_into().unwrap() {
+        return KMALLOC_SHIFT_LOW;
+    }
+
+    if KMALLOC_MIN_SIZE <= 32 && size > 64 && size <= 96 {
+        return 1;
+    }
+    if KMALLOC_MIN_SIZE <= 64 && size > 128 && size <= 192 {
+        return 2;
+    }
+    if size <=          8 {return 3;}
+    if size <=         16 {return 4;}
+    if size <=         32 {return 5;}
+    if size <=         64 {return 6;}
+    if size <=        128 {return 7;}
+    if size <=        256 {return 8;}
+    if size <=        512 {return 9;}
+    if size <=       1024 {return 10;}
+    if size <=   2 * 1024 {return 11;}
+    if size <=   4 * 1024 {return 12;}
+    if size <=   8 * 1024 {return 13;}
+    if size <=  16 * 1024 {return 14;}
+    if size <=  32 * 1024 {return 15;}
+    if size <=  64 * 1024 {return 16;}
+    if size <= 128 * 1024 {return 17;}
+    if size <= 256 * 1024 {return 18;}
+    if size <= 512 * 1024 {return 19;}
+    if size <= 1024 * 1024 {return 20;}
+    if size <=  2 * 1024 * 1024 {return 21;}
+    return u32::MAX;
+}
+
 /*
  * Figure out what the alignment of the objects will be given a set of
  * flags, a user specified alignment and the size of the objects.
@@ -618,6 +676,7 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub static mut slab_state: slab_state_t;
     pub static mut kmem_buckets_cache: *mut kmem_cache;
     pub static mut kmalloc_size_index: [u8; 24];
+    pub static kmalloc_info: [kmalloc_info_struct; 22];
 
     pub fn panic(fmt: *const c_char, ...);
     pub fn kmem_cache_alloc_noprof(cachep: *const kmem_cache, flags: gfp_t) -> *mut core::ffi::c_void;
@@ -656,6 +715,11 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn kmalloc_slab_link(size: usize, b: *mut bindings::kmem_buckets, flags: gfp_t, caller: u32) -> *mut kmem_cache;
     pub fn kmem_cache_create_kernel_link() -> *mut kmem_cache;
     pub fn kmem_cache_create_nowait_link() -> *mut kmem_cache;
+
+    pub fn dma_get_cache_alignment_link() -> u32;
+    pub fn config_dma_bounce_unaligned_link() -> u32;
+    pub fn arch_slab_minalign_link() -> u32;
+    pub fn mem_cgroup_kmem_disabled_link() -> bool;
 
     // TODO: Remove these later
 }
@@ -1470,63 +1534,66 @@ pub extern "C" fn setup_kmalloc_cache_index_table(_: c_void)
      }
  }
  
- /*
- static unsigned int __kmalloc_minalign(void)
- {
-     unsigned int minalign = dma_get_cache_alignment();
- 
-     if (IS_ENABLED(CONFIG_DMA_BOUNCE_UNALIGNED_KMALLOC) &&
-         is_swiotlb_allocated())
-         minalign = ARCH_KMALLOC_MINALIGN;
- 
-     return max(minalign, arch_slab_minalign());
+ #[no_mangle]
+ pub extern "C" fn __kmalloc_minalign() -> u32 {
+    let mut minalign: u32 = unsafe {dma_get_cache_alignment_link()};
+
+    if unsafe {config_dma_bounce_unaligned_link() != 0} {
+        minalign = ARCH_KMALLOC_MINALIGN as u32;
+    }
+
+    core::cmp::max(minalign, unsafe {arch_slab_minalign_link()})
  }
  
- static void __init
- new_kmalloc_cache(int idx, enum kmalloc_cache_type type)
- {
-     slab_flags_t flags = 0;
-     unsigned int minalign = __kmalloc_minalign();
-     unsigned int aligned_size = kmalloc_info[idx].size;
-     int aligned_idx = idx;
- 
-     if ((KMALLOC_RECLAIM != KMALLOC_NORMAL) && (type == KMALLOC_RECLAIM)) {
-         flags |= SLAB_RECLAIM_ACCOUNT;
-     } else if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_CGROUP)) {
-         if (mem_cgroup_kmem_disabled()) {
-             kmalloc_caches[type][idx] = kmalloc_caches[KMALLOC_NORMAL][idx];
-             return;
-         }
-         flags |= SLAB_ACCOUNT;
-     } else if (IS_ENABLED(CONFIG_ZONE_DMA) && (type == KMALLOC_DMA)) {
-         flags |= SLAB_CACHE_DMA;
-     }
- 
- #ifdef CONFIG_RANDOM_KMALLOC_CACHES
-     if (type >= KMALLOC_RANDOM_START && type <= KMALLOC_RANDOM_END)
-         flags |= SLAB_NO_MERGE;
- #endif
- 
-     /*
+ #[no_mangle]
+ pub extern "C" fn new_kmalloc_cache(idx: i32, t: bindings::kmalloc_cache_type) {
+    let mut flags: slab_flags_t = 0;
+    let minalign: u32 = __kmalloc_minalign();
+    let mut aligned_size: u32 = unsafe {kmalloc_info.get_unchecked(idx as usize).size};
+    let mut aligned_idx: i32 = idx;
+
+    if KMALLOC_RECLAIM != KMALLOC_NORMAL && t == KMALLOC_RECLAIM {
+        flags |= SLAB_RECLAIM_ACCOUNT;
+    } else if bindings::CONFIG_MEMCG != 0 && t == KMALLOC_CGROUP {
+        if (unsafe {mem_cgroup_kmem_disabled_link()}) {
+            unsafe {*kmalloc_caches.get_unchecked_mut(t as usize).get_unchecked_mut(aligned_idx as usize) 
+                = *kmalloc_caches.get_unchecked_mut(KMALLOC_NORMAL as usize).get_unchecked_mut(idx as usize);}
+            return;
+        }
+        flags |= SLAB_ACCOUNT;
+    } else if bindings::CONFIG_ZONE_DMA != 0 && t == KMALLOC_DMA {
+        flags |= SLAB_CACHE_DMA;
+    }
+
+    if CONFIG_RANDOM_KMALLOC_CACHES {
+        if t >= KMALLOC_RANDOM_START && t <= KMALLOC_RANDOM_END {
+            flags |= SLAB_NO_MERGE;
+        }
+    }
+
+    /*
       * If CONFIG_MEMCG is enabled, disable cache merging for
       * KMALLOC_NORMAL caches.
       */
-     if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_NORMAL))
-         flags |= SLAB_NO_MERGE;
- 
-     if (minalign > ARCH_KMALLOC_MINALIGN) {
-         aligned_size = ALIGN(aligned_size, minalign);
-         aligned_idx = __kmalloc_index(aligned_size, false);
-     }
- 
-     if (!kmalloc_caches[type][aligned_idx])
-         kmalloc_caches[type][aligned_idx] = create_kmalloc_cache(
-                     kmalloc_info[aligned_idx].name[type],
-                     aligned_size, flags);
-     if (idx != aligned_idx)
-         kmalloc_caches[type][idx] = kmalloc_caches[type][aligned_idx];
+    if bindings::CONFIG_MEMCG != 0 && t == KMALLOC_NORMAL {
+        flags |= SLAB_NO_MERGE;
+    }
+
+    if minalign > ARCH_KMALLOC_MINALIGN.try_into().unwrap() {
+        aligned_size = align_macro(aligned_size, minalign);
+        aligned_idx = __kmalloc_index(aligned_size as usize, false) as i32;
+    }
+
+    if unsafe {*kmalloc_caches.get_unchecked(t as usize).get_unchecked(aligned_idx as usize)} == core::ptr::null_mut() {
+        unsafe {kmalloc_caches[t as usize][aligned_idx as usize] = create_kmalloc_cache(
+                    kmalloc_info[aligned_idx as usize].name[t as usize],
+                    aligned_size, flags) as *mut bindings::kmem_cache;}
+    }
+    if idx != aligned_idx  {
+        unsafe {*kmalloc_caches.get_unchecked_mut(t as usize).get_unchecked_mut(aligned_idx as usize) = kmalloc_caches[t as usize][aligned_idx as usize];}
+    }
  }
- 
+/*
  /*
   * Create the kmalloc array. Some of the regular kmalloc arrays
   * may already have been created because they were needed to

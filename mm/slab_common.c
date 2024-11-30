@@ -150,6 +150,27 @@ int get_order_link(unsigned long size)
 }
 EXPORT_SYMBOL(get_order_link);
 
+unsigned long dma_get_cache_alignment_link(void) {
+	return dma_get_cache_alignment();
+}
+EXPORT_SYMBOL(dma_get_cache_alignment_link);
+
+unsigned long config_dma_bounce_unaligned_link(void) {
+	return IS_ENABLED(CONFIG_DMA_BOUNCE_UNALIGNED_KMALLOC) &&
+	    is_swiotlb_allocated();
+}
+EXPORT_SYMBOL(config_dma_bounce_unaligned_link);
+
+unsigned long arch_slab_minalign_link(void) {
+	return arch_slab_minalign();
+}
+EXPORT_SYMBOL(arch_slab_minalign_link);
+
+bool mem_cgroup_kmem_disabled_link(void) {
+	return mem_cgroup_kmem_disabled();
+}
+EXPORT_SYMBOL(mem_cgroup_kmem_disabled_link);
+
 EXPORT_SYMBOL(calculate_alignment);
 /*
  * Find a mergeable slab cache
@@ -209,34 +230,6 @@ extern struct kmem_cache *create_cache(const char *name,
 		unsigned int usersize, void (*ctor)(void *),
 		struct kmem_cache *root_cache);
 
-/**
- * kmem_cache_create_usercopy - Create a cache with a region suitable
- * for copying to userspace
- * @name: A string which is used in /proc/slabinfo to identify this cache.
- * @size: The size of objects to be created in this cache.
- * @align: The required alignment for the objects.
- * @flags: SLAB flags
- * @useroffset: Usercopy region offset
- * @usersize: Usercopy region size
- * @ctor: A constructor for the objects.
- *
- * Cannot be called within a interrupt, but can be interrupted.
- * The @ctor is run when new pages are allocated by the cache.
- *
- * The flags are
- *
- * %SLAB_POISON - Poison the slab with a known test pattern (a5a5a5a5)
- * to catch references to uninitialised memory.
- *
- * %SLAB_RED_ZONE - Insert `Red` zones around the allocated memory to check
- * for buffer overruns.
- *
- * %SLAB_HWCACHE_ALIGN - Align the objects in this cache to a hardware
- * cacheline.  This can be beneficial if you're counting cycles as closely
- * as davem.
- *
- * Return: a pointer to the cache on success, NULL on failure.
- */
 extern struct kmem_cache *
 kmem_cache_create_usercopy(const char *name,
 		  unsigned int size, unsigned int align,
@@ -246,61 +239,13 @@ kmem_cache_create_usercopy(const char *name,
 
 EXPORT_SYMBOL(kmem_cache_create_usercopy);
 
-/**
- * kmem_cache_create - Create a cache.
- * @name: A string which is used in /proc/slabinfo to identify this cache.
- * @size: The size of objects to be created in this cache.
- * @align: The required alignment for the objects.
- * @flags: SLAB flags
- * @ctor: A constructor for the objects.
- *
- * Cannot be called within a interrupt, but can be interrupted.
- * The @ctor is run when new pages are allocated by the cache.
- *
- * The flags are
- *
- * %SLAB_POISON - Poison the slab with a known test pattern (a5a5a5a5)
- * to catch references to uninitialised memory.
- *
- * %SLAB_RED_ZONE - Insert `Red` zones around the allocated memory to check
- * for buffer overruns.
- *
- * %SLAB_HWCACHE_ALIGN - Align the objects in this cache to a hardware
- * cacheline.  This can be beneficial if you're counting cycles as closely
- * as davem.
- *
- * Return: a pointer to the cache on success, NULL on failure.
- */
 extern struct kmem_cache *
 kmem_cache_create(const char *name, unsigned int size, unsigned int align,
 		slab_flags_t flags, void (*ctor)(void *));
-// {
-// 	return kmem_cache_create_usercopy(name, size, align, flags, 0, 0,
-// 					  ctor);
-// }
 EXPORT_SYMBOL(kmem_cache_create);
 
 struct kmem_cache *kmem_buckets_cache __ro_after_init;
 
-/**
- * kmem_buckets_create - Create a set of caches that handle dynamic sized
- *			 allocations via kmem_buckets_alloc()
- * @name: A prefix string which is used in /proc/slabinfo to identify this
- *	  cache. The individual caches with have their sizes as the suffix.
- * @flags: SLAB flags (see kmem_cache_create() for details).
- * @useroffset: Starting offset within an allocation that may be copied
- *		to/from userspace.
- * @usersize: How many bytes, starting at @useroffset, may be copied
- *		to/from userspace.
- * @ctor: A constructor for the objects, run when new allocations are made.
- *
- * Cannot be called within an interrupt, but can be interrupted.
- *
- * Return: a pointer to the cache on success, NULL on failure. When
- * CONFIG_SLAB_BUCKETS is not enabled, ZERO_SIZE_PTR is returned, and
- * subsequent calls to kmem_buckets_alloc() will fall back to kmalloc().
- * (i.e. callers only need to check for NULL on failure.)
- */
 extern kmem_buckets *kmem_buckets_create(const char *name, slab_flags_t flags,
 				  unsigned int useroffset,
 				  unsigned int usersize,
@@ -309,15 +254,7 @@ extern kmem_buckets *kmem_buckets_create(const char *name, slab_flags_t flags,
 EXPORT_SYMBOL(kmem_buckets_create);
 
 #ifdef SLAB_SUPPORTS_SYSFS
-/*
- * For a given kmem_cache, kmem_cache_destroy() should only be called
- * once or there will be a use-after-free problem. The actual deletion
- * and release of the kobject does not need slab_mutex or cpu_hotplug_lock
- * protection. So they are now done without holding those locks.
- *
- * Note that there will be a slight delay in the deletion of sysfs files
- * if kmem_cache_release() is called indrectly from a work function.
- */
+
 extern void kmem_cache_release(struct kmem_cache *s);
 
 #else
@@ -333,15 +270,6 @@ extern void slab_kmem_cache_release(struct kmem_cache *s);
 extern void kmem_cache_destroy(struct kmem_cache *s);
 EXPORT_SYMBOL(kmem_cache_destroy);
 
-/**
- * kmem_cache_shrink - Shrink a cache.
- * @cachep: The cache to shrink.
- *
- * Releases as many slabs as possible for a cache.
- * To help debugging, a zero exit status indicates all slabs were released.
- *
- * Return: %0 if all slabs were released, non-zero otherwise
- */
 extern int kmem_cache_shrink(struct kmem_cache *cachep);
 EXPORT_SYMBOL(kmem_cache_shrink);
 
@@ -530,7 +458,7 @@ EXPORT_SYMBOL(kmalloc_size_roundup);
  * kmalloc_index() supports up to 2^21=2MB, so the final entry of the table is
  * kmalloc-2M.
  */
-const struct kmalloc_info_struct kmalloc_info[] __initconst = {
+extern const struct kmalloc_info_struct kmalloc_info[] __initconst = {
 	INIT_KMALLOC_INFO(0, 0),
 	INIT_KMALLOC_INFO(96, 96),
 	INIT_KMALLOC_INFO(192, 192),
@@ -555,108 +483,53 @@ const struct kmalloc_info_struct kmalloc_info[] __initconst = {
 	INIT_KMALLOC_INFO(2097152, 2M)
 };
 
-/*
- * Patch up the size_index table if we have strange large alignment
- * requirements for the kmalloc array. This is only the case for
- * MIPS it seems. The standard arches will not generate any code here.
- *
- * Largest permitted alignment is 256 bytes due to the way we
- * handle the index determination for the smaller caches.
- *
- * Make sure that nothing crazy happens if someone starts tinkering
- * around with ARCH_KMALLOC_MINALIGN
- */
+
 extern void __init setup_kmalloc_cache_index_table(void);
+extern unsigned int __kmalloc_minalign(void);
+
+extern void __init new_kmalloc_cache(int idx, enum kmalloc_cache_type type);
 // {
-// 	unsigned int i;
+// 	slab_flags_t flags = 0;
+// 	unsigned int minalign = __kmalloc_minalign();
+// 	unsigned int aligned_size = kmalloc_info[idx].size;
+// 	int aligned_idx = idx;
 
-// 	BUILD_BUG_ON(KMALLOC_MIN_SIZE > 256 ||
-// 		!is_power_of_2(KMALLOC_MIN_SIZE));
-
-// 	for (i = 8; i < KMALLOC_MIN_SIZE; i += 8) {
-// 		unsigned int elem = size_index_elem(i);
-
-// 		if (elem >= ARRAY_SIZE(kmalloc_size_index))
-// 			break;
-// 		kmalloc_size_index[elem] = KMALLOC_SHIFT_LOW;
+// 	if ((KMALLOC_RECLAIM != KMALLOC_NORMAL) && (type == KMALLOC_RECLAIM)) {
+// 		flags |= SLAB_RECLAIM_ACCOUNT;
+// 	} else if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_CGROUP)) {
+// 		if (mem_cgroup_kmem_disabled()) {
+// 			kmalloc_caches[type][idx] = kmalloc_caches[KMALLOC_NORMAL][idx];
+// 			return;
+// 		}
+// 		flags |= SLAB_ACCOUNT;
+// 	} else if (IS_ENABLED(CONFIG_ZONE_DMA) && (type == KMALLOC_DMA)) {
+// 		flags |= SLAB_CACHE_DMA;
 // 	}
 
-// 	if (KMALLOC_MIN_SIZE >= 64) {
-// 		/*
-// 		 * The 96 byte sized cache is not used if the alignment
-// 		 * is 64 byte.
-// 		 */
-// 		for (i = 64 + 8; i <= 96; i += 8)
-// 			kmalloc_size_index[size_index_elem(i)] = 7;
+// #ifdef CONFIG_RANDOM_KMALLOC_CACHES
+// 	if (type >= KMALLOC_RANDOM_START && type <= KMALLOC_RANDOM_END)
+// 		flags |= SLAB_NO_MERGE;
+// #endif
 
+// 	/*
+// 	 * If CONFIG_MEMCG is enabled, disable cache merging for
+// 	 * KMALLOC_NORMAL caches.
+// 	 */
+// 	if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_NORMAL))
+// 		flags |= SLAB_NO_MERGE;
+
+// 	if (minalign > ARCH_KMALLOC_MINALIGN) {
+// 		aligned_size = ALIGN(aligned_size, minalign);
+// 		aligned_idx = __kmalloc_index(aligned_size, false);
 // 	}
 
-// 	if (KMALLOC_MIN_SIZE >= 128) {
-// 		/*
-// 		 * The 192 byte sized cache is not used if the alignment
-// 		 * is 128 byte. Redirect kmalloc to use the 256 byte cache
-// 		 * instead.
-// 		 */
-// 		for (i = 128 + 8; i <= 192; i += 8)
-// 			kmalloc_size_index[size_index_elem(i)] = 8;
-// 	}
+// 	if (!kmalloc_caches[type][aligned_idx])
+// 		kmalloc_caches[type][aligned_idx] = create_kmalloc_cache(
+// 					kmalloc_info[aligned_idx].name[type],
+// 					aligned_size, flags);
+// 	if (idx != aligned_idx)
+// 		kmalloc_caches[type][idx] = kmalloc_caches[type][aligned_idx];
 // }
-
-static unsigned int __kmalloc_minalign(void)
-{
-	unsigned int minalign = dma_get_cache_alignment();
-
-	if (IS_ENABLED(CONFIG_DMA_BOUNCE_UNALIGNED_KMALLOC) &&
-	    is_swiotlb_allocated())
-		minalign = ARCH_KMALLOC_MINALIGN;
-
-	return max(minalign, arch_slab_minalign());
-}
-
-static void __init
-new_kmalloc_cache(int idx, enum kmalloc_cache_type type)
-{
-	slab_flags_t flags = 0;
-	unsigned int minalign = __kmalloc_minalign();
-	unsigned int aligned_size = kmalloc_info[idx].size;
-	int aligned_idx = idx;
-
-	if ((KMALLOC_RECLAIM != KMALLOC_NORMAL) && (type == KMALLOC_RECLAIM)) {
-		flags |= SLAB_RECLAIM_ACCOUNT;
-	} else if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_CGROUP)) {
-		if (mem_cgroup_kmem_disabled()) {
-			kmalloc_caches[type][idx] = kmalloc_caches[KMALLOC_NORMAL][idx];
-			return;
-		}
-		flags |= SLAB_ACCOUNT;
-	} else if (IS_ENABLED(CONFIG_ZONE_DMA) && (type == KMALLOC_DMA)) {
-		flags |= SLAB_CACHE_DMA;
-	}
-
-#ifdef CONFIG_RANDOM_KMALLOC_CACHES
-	if (type >= KMALLOC_RANDOM_START && type <= KMALLOC_RANDOM_END)
-		flags |= SLAB_NO_MERGE;
-#endif
-
-	/*
-	 * If CONFIG_MEMCG is enabled, disable cache merging for
-	 * KMALLOC_NORMAL caches.
-	 */
-	if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_NORMAL))
-		flags |= SLAB_NO_MERGE;
-
-	if (minalign > ARCH_KMALLOC_MINALIGN) {
-		aligned_size = ALIGN(aligned_size, minalign);
-		aligned_idx = __kmalloc_index(aligned_size, false);
-	}
-
-	if (!kmalloc_caches[type][aligned_idx])
-		kmalloc_caches[type][aligned_idx] = create_kmalloc_cache(
-					kmalloc_info[aligned_idx].name[type],
-					aligned_size, flags);
-	if (idx != aligned_idx)
-		kmalloc_caches[type][idx] = kmalloc_caches[type][aligned_idx];
-}
 
 /*
  * Create the kmalloc array. Some of the regular kmalloc arrays
