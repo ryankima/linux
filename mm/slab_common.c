@@ -40,9 +40,9 @@ LIST_HEAD(slab_caches);
 DEFINE_MUTEX(slab_mutex);
 struct kmem_cache *kmem_cache;
 
-static LIST_HEAD(slab_caches_to_rcu_destroy);
+extern LIST_HEAD(slab_caches_to_rcu_destroy);
 static void slab_caches_to_rcu_destroy_workfn(struct work_struct *work);
-static DECLARE_WORK(slab_caches_to_rcu_destroy_work,
+extern DECLARE_WORK(slab_caches_to_rcu_destroy_work,
 		    slab_caches_to_rcu_destroy_workfn);
 
 /*
@@ -108,60 +108,55 @@ static inline int kmem_cache_sanity_check(const char *name, unsigned int size)
 #endif
 
 
-// /*
-//  * Figure out what the alignment of the objects will be given a set of
-//  * flags, a user specified alignment and the size of the objects.
-//  */
-// static unsigned int calculate_alignment(slab_flags_t flags,
-// 		unsigned int align, unsigned int size)
-// {
-// 	/*
-// 	 * If the user wants hardware cache aligned objects then follow that
-// 	 * suggestion if the object is sufficiently large.
-// 	 *
-// 	 * The hardware cache alignment cannot override the specified
-// 	 * alignment though. If that is greater then use it.
-// 	 */
-// 	if (flags & SLAB_HWCACHE_ALIGN) {
-// 		unsigned int ralign;
+/*
+From Ryan: This is kind of a jank work around for some symbol linking, don't
+worry about it too much
+*/
+bool schedule_work_link(struct work_struct *work)
+{
+	return schedule_work(work);
+}
+EXPORT_SYMBOL(schedule_work_link);
 
-// 		ralign = cache_line_size();
-// 		while (size <= ralign / 2)
-// 			ralign /= 2;
-// 		align = max(align, ralign);
-// 	}
+void kasan_cache_shutdown_link(struct kmem_cache *cache) {
+	kasan_cache_shutdown(cache);
+}
+EXPORT_SYMBOL(kasan_cache_shutdown_link);
 
-// 	align = max(align, arch_slab_minalign());
+void kasan_cache_shrink_link(struct kmem_cache *cache) {
+	kasan_cache_shrink(cache);
+}
+EXPORT_SYMBOL(kasan_cache_shrink_link);
 
-// 	return ALIGN(align, sizeof(void *));
-// }
+struct kmem_cache *kmem_cache_create_kernel_link(void) {
+	return kmem_cache_zalloc(kmem_cache, GFP_KERNEL);
+}
+EXPORT_SYMBOL(kmem_cache_create_kernel_link);
+
+struct kmem_cache *kmem_cache_create_nowait_link(void) {
+	return kmem_cache_zalloc(kmem_cache, GFP_NOWAIT);
+}
+EXPORT_SYMBOL(kmem_cache_create_nowait_link);
+
+struct kmem_cache *
+kmalloc_slab_link(size_t size, kmem_buckets *b, gfp_t flags, unsigned long caller) {
+	return kmalloc_slab(size, b, flags, caller);
+}
+EXPORT_SYMBOL(kmalloc_slab_link);
+
+int get_order_link(unsigned long size)
+{
+	return get_order(size);
+}
+EXPORT_SYMBOL(get_order_link);
+
 EXPORT_SYMBOL(calculate_alignment);
 /*
  * Find a mergeable slab cache
  */
  
- extern int slab_unmergeable(struct kmem_cache *s);
-// int slab_unmergeable(struct kmem_cache *s)
-// {
-// 	if (slab_nomerge || (s->flags & SLAB_NEVER_MERGE))
-// 		return 1;
+extern int slab_unmergeable(struct kmem_cache *s);
 
-// 	if (s->ctor)
-// 		return 1;
-
-// #ifdef CONFIG_HARDENED_USERCOPY
-// 	if (s->usersize)
-// 		return 1;
-// #endif
-
-// 	/*
-// 	 * We may have set a slab to be unmergeable during bootstrap.
-// 	 */
-// 	if (s->refcount < 0)
-// 		return 1;
-
-// 	return 0;
-// }
 
 extern struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
  		slab_flags_t flags, const char *name, void (*ctor)(void *));
@@ -213,40 +208,6 @@ extern struct kmem_cache *create_cache(const char *name,
 		slab_flags_t flags, unsigned int useroffset,
 		unsigned int usersize, void (*ctor)(void *),
 		struct kmem_cache *root_cache);
-// {
-// 	struct kmem_cache *s;
-// 	int err;
-
-// 	if (WARN_ON(useroffset + usersize > object_size))
-// 		useroffset = usersize = 0;
-
-// 	err = -ENOMEM;
-// 	s = kmem_cache_zalloc(kmem_cache, GFP_KERNEL);
-// 	if (!s)
-// 		goto out;
-
-// 	s->name = name;
-// 	s->size = s->object_size = object_size;
-// 	s->align = align;
-// 	s->ctor = ctor;
-// #ifdef CONFIG_HARDENED_USERCOPY
-// 	s->useroffset = useroffset;
-// 	s->usersize = usersize;
-// #endif
-
-// 	err = __kmem_cache_create(s, flags);
-// 	if (err)
-// 		goto out_free_cache;
-
-// 	s->refcount = 1;
-// 	list_add(&s->list, &slab_caches);
-// 	return s;
-
-// out_free_cache:
-// 	kmem_cache_free(kmem_cache, s);
-// out:
-// 	return ERR_PTR(err);
-// }
 
 /**
  * kmem_cache_create_usercopy - Create a cache with a region suitable
@@ -282,87 +243,7 @@ kmem_cache_create_usercopy(const char *name,
 		  slab_flags_t flags,
 		  unsigned int useroffset, unsigned int usersize,
 		  void (*ctor)(void *));
-// {
-// 	struct kmem_cache *s = NULL;
-// 	const char *cache_name;
-// 	int err;
 
-// #ifdef CONFIG_SLUB_DEBUG
-// 	/*
-// 	 * If no slab_debug was enabled globally, the static key is not yet
-// 	 * enabled by setup_slub_debug(). Enable it if the cache is being
-// 	 * created with any of the debugging flags passed explicitly.
-// 	 * It's also possible that this is the first cache created with
-// 	 * SLAB_STORE_USER and we should init stack_depot for it.
-// 	 */
-// 	if (flags & SLAB_DEBUG_FLAGS)
-// 		static_branch_enable(&slub_debug_enabled);
-// 	if (flags & SLAB_STORE_USER)
-// 		stack_depot_init();
-// #endif
-
-// 	mutex_lock(&slab_mutex);
-
-// 	err = kmem_cache_sanity_check(name, size);
-// 	if (err) {
-// 		goto out_unlock;
-// 	}
-
-// 	/* Refuse requests with allocator specific flags */
-// 	if (flags & ~SLAB_FLAGS_PERMITTED) {
-// 		err = -EINVAL;
-// 		goto out_unlock;
-// 	}
-
-// 	/*
-// 	 * Some allocators will constraint the set of valid flags to a subset
-// 	 * of all flags. We expect them to define CACHE_CREATE_MASK in this
-// 	 * case, and we'll just provide them with a sanitized version of the
-// 	 * passed flags.
-// 	 */
-// 	flags &= CACHE_CREATE_MASK;
-
-// 	/* Fail closed on bad usersize of useroffset values. */
-// 	if (!IS_ENABLED(CONFIG_HARDENED_USERCOPY) ||
-// 	    WARN_ON(!usersize && useroffset) ||
-// 	    WARN_ON(size < usersize || size - usersize < useroffset))
-// 		usersize = useroffset = 0;
-
-// 	if (!usersize)
-// 		s = __kmem_cache_alias(name, size, align, flags, ctor);
-// 	if (s)
-// 		goto out_unlock;
-
-// 	cache_name = kstrdup_const(name, GFP_KERNEL);
-// 	if (!cache_name) {
-// 		err = -ENOMEM;
-// 		goto out_unlock;
-// 	}
-
-// 	s = create_cache(cache_name, size,
-// 			 calculate_alignment(flags, align, size),
-// 			 flags, useroffset, usersize, ctor, NULL);
-// 	if (IS_ERR(s)) {
-// 		err = PTR_ERR(s);
-// 		kfree_const(cache_name);
-// 	}
-
-// out_unlock:
-// 	mutex_unlock(&slab_mutex);
-
-// 	if (err) {
-// 		if (flags & SLAB_PANIC)
-// 			panic("%s: Failed to create slab '%s'. Error %d\n",
-// 				__func__, name, err);
-// 		else {
-// 			pr_warn("%s(%s) failed with error %d\n",
-// 				__func__, name, err);
-// 			dump_stack();
-// 		}
-// 		return NULL;
-// 	}
-// 	return s;
-// }
 EXPORT_SYMBOL(kmem_cache_create_usercopy);
 
 /**
@@ -424,71 +305,7 @@ extern kmem_buckets *kmem_buckets_create(const char *name, slab_flags_t flags,
 				  unsigned int useroffset,
 				  unsigned int usersize,
 				  void (*ctor)(void *));
-// {
-// 	kmem_buckets *b;
-// 	int idx;
 
-// 	/*
-// 	 * When the separate buckets API is not built in, just return
-// 	 * a non-NULL value for the kmem_buckets pointer, which will be
-// 	 * unused when performing allocations.
-// 	 */
-// 	if (!IS_ENABLED(CONFIG_SLAB_BUCKETS))
-// 		return ZERO_SIZE_PTR;
-
-// 	if (WARN_ON(!kmem_buckets_cache))
-// 		return NULL;
-
-// 	b = kmem_cache_alloc(kmem_buckets_cache, GFP_KERNEL|__GFP_ZERO);
-// 	if (WARN_ON(!b))
-// 		return NULL;
-
-// 	flags |= SLAB_NO_MERGE;
-
-// 	for (idx = 0; idx < ARRAY_SIZE(kmalloc_caches[KMALLOC_NORMAL]); idx++) {
-// 		char *short_size, *cache_name;
-// 		unsigned int cache_useroffset, cache_usersize;
-// 		unsigned int size;
-
-// 		if (!kmalloc_caches[KMALLOC_NORMAL][idx])
-// 			continue;
-
-// 		size = kmalloc_caches[KMALLOC_NORMAL][idx]->object_size;
-// 		if (!size)
-// 			continue;
-
-// 		short_size = strchr(kmalloc_caches[KMALLOC_NORMAL][idx]->name, '-');
-// 		if (WARN_ON(!short_size))
-// 			goto fail;
-
-// 		cache_name = kasprintf(GFP_KERNEL, "%s-%s", name, short_size + 1);
-// 		if (WARN_ON(!cache_name))
-// 			goto fail;
-
-// 		if (useroffset >= size) {
-// 			cache_useroffset = 0;
-// 			cache_usersize = 0;
-// 		} else {
-// 			cache_useroffset = useroffset;
-// 			cache_usersize = min(size - cache_useroffset, usersize);
-// 		}
-// 		(*b)[idx] = kmem_cache_create_usercopy(cache_name, size,
-// 					0, flags, cache_useroffset,
-// 					cache_usersize, ctor);
-// 		kfree(cache_name);
-// 		if (WARN_ON(!(*b)[idx]))
-// 			goto fail;
-// 	}
-
-// 	return b;
-
-// fail:
-// 	for (idx = 0; idx < ARRAY_SIZE(kmalloc_caches[KMALLOC_NORMAL]); idx++)
-// 		kmem_cache_destroy((*b)[idx]);
-// 	kfree(b);
-
-// 	return NULL;
-// }
 EXPORT_SYMBOL(kmem_buckets_create);
 
 #ifdef SLAB_SUPPORTS_SYSFS
@@ -501,15 +318,8 @@ EXPORT_SYMBOL(kmem_buckets_create);
  * Note that there will be a slight delay in the deletion of sysfs files
  * if kmem_cache_release() is called indrectly from a work function.
  */
-static void kmem_cache_release(struct kmem_cache *s)
-{
-	if (slab_state >= FULL) {
-		sysfs_slab_unlink(s);
-		sysfs_slab_release(s);
-	} else {
-		slab_kmem_cache_release(s);
-	}
-}
+extern void kmem_cache_release(struct kmem_cache *s);
+
 #else
 static void kmem_cache_release(struct kmem_cache *s)
 {
@@ -517,90 +327,10 @@ static void kmem_cache_release(struct kmem_cache *s)
 }
 #endif
 
-static void slab_caches_to_rcu_destroy_workfn(struct work_struct *work)
-{
-	LIST_HEAD(to_destroy);
-	struct kmem_cache *s, *s2;
-
-	/*
-	 * On destruction, SLAB_TYPESAFE_BY_RCU kmem_caches are put on the
-	 * @slab_caches_to_rcu_destroy list.  The slab pages are freed
-	 * through RCU and the associated kmem_cache are dereferenced
-	 * while freeing the pages, so the kmem_caches should be freed only
-	 * after the pending RCU operations are finished.  As rcu_barrier()
-	 * is a pretty slow operation, we batch all pending destructions
-	 * asynchronously.
-	 */
-	mutex_lock(&slab_mutex);
-	list_splice_init(&slab_caches_to_rcu_destroy, &to_destroy);
-	mutex_unlock(&slab_mutex);
-
-	if (list_empty(&to_destroy))
-		return;
-
-	rcu_barrier();
-
-	list_for_each_entry_safe(s, s2, &to_destroy, list) {
-		debugfs_slab_release(s);
-		kfence_shutdown_cache(s);
-		kmem_cache_release(s);
-	}
-}
-
-static int shutdown_cache(struct kmem_cache *s)
-{
-	/* free asan quarantined objects */
-	kasan_cache_shutdown(s);
-
-	if (__kmem_cache_shutdown(s) != 0)
-		return -EBUSY;
-
-	list_del(&s->list);
-
-	if (s->flags & SLAB_TYPESAFE_BY_RCU) {
-		list_add_tail(&s->list, &slab_caches_to_rcu_destroy);
-		schedule_work(&slab_caches_to_rcu_destroy_work);
-	} else {
-		kfence_shutdown_cache(s);
-		debugfs_slab_release(s);
-	}
-
-	return 0;
-}
-
-void slab_kmem_cache_release(struct kmem_cache *s)
-{
-	__kmem_cache_release(s);
-	kfree_const(s->name);
-	kmem_cache_free(kmem_cache, s);
-}
-
-void kmem_cache_destroy(struct kmem_cache *s)
-{
-	int err = -EBUSY;
-	bool rcu_set;
-
-	if (unlikely(!s) || !kasan_check_byte(s))
-		return;
-
-	cpus_read_lock();
-	mutex_lock(&slab_mutex);
-
-	rcu_set = s->flags & SLAB_TYPESAFE_BY_RCU;
-
-	s->refcount--;
-	if (s->refcount)
-		goto out_unlock;
-
-	err = shutdown_cache(s);
-	WARN(err, "%s %s: Slab cache still has objects when called from %pS",
-	     __func__, s->name, (void *)_RET_IP_);
-out_unlock:
-	mutex_unlock(&slab_mutex);
-	cpus_read_unlock();
-	if (!err && !rcu_set)
-		kmem_cache_release(s);
-}
+extern void slab_caches_to_rcu_destroy_workfn(struct work_struct *work);
+extern int shutdown_cache(struct kmem_cache *s);
+extern void slab_kmem_cache_release(struct kmem_cache *s);
+extern void kmem_cache_destroy(struct kmem_cache *s);
 EXPORT_SYMBOL(kmem_cache_destroy);
 
 /**
@@ -612,26 +342,14 @@ EXPORT_SYMBOL(kmem_cache_destroy);
  *
  * Return: %0 if all slabs were released, non-zero otherwise
  */
-int kmem_cache_shrink(struct kmem_cache *cachep)
-{
-	kasan_cache_shrink(cachep);
-
-	return __kmem_cache_shrink(cachep);
-}
+extern int kmem_cache_shrink(struct kmem_cache *cachep);
 EXPORT_SYMBOL(kmem_cache_shrink);
 
-bool slab_is_available(void)
-{
-	return slab_state >= UP;
-}
+extern bool slab_is_available(void);
 
 #ifdef CONFIG_PRINTK
-static void kmem_obj_info(struct kmem_obj_info *kpp, void *object, struct slab *slab)
-{
-	if (__kfence_obj_info(kpp, object, slab))
-		return;
-	__kmem_obj_info(kpp, object, slab);
-}
+extern void kmem_obj_info(struct kmem_obj_info *kpp, void *object, struct slab *slab);
+
 
 /**
  * kmem_dump_obj - Print available slab provenance information
@@ -705,53 +423,12 @@ EXPORT_SYMBOL_GPL(kmem_dump_obj);
 #endif
 
 /* Create a cache during boot when no slab services are available yet */
-void __init create_boot_cache(struct kmem_cache *s, const char *name,
+extern void create_boot_cache(struct kmem_cache *s, const char *name,
 		unsigned int size, slab_flags_t flags,
-		unsigned int useroffset, unsigned int usersize)
-{
-	int err;
-	unsigned int align = ARCH_KMALLOC_MINALIGN;
-
-	s->name = name;
-	s->size = s->object_size = size;
-
-	/*
-	 * kmalloc caches guarantee alignment of at least the largest
-	 * power-of-two divisor of the size. For power-of-two sizes,
-	 * it is the size itself.
-	 */
-	if (flags & SLAB_KMALLOC)
-		align = max(align, 1U << (ffs(size) - 1));
-	s->align = calculate_alignment(flags, align, size);
-
-#ifdef CONFIG_HARDENED_USERCOPY
-	s->useroffset = useroffset;
-	s->usersize = usersize;
-#endif
-
-	err = __kmem_cache_create(s, flags);
-
-	if (err)
-		panic("Creation of kmalloc slab %s size=%u failed. Reason %d\n",
-					name, size, err);
-
-	s->refcount = -1;	/* Exempt from merging for now */
-}
-
-static struct kmem_cache *__init create_kmalloc_cache(const char *name,
+		unsigned int useroffset, unsigned int usersize);
+extern struct kmem_cache * create_kmalloc_cache(const char *name,
 						      unsigned int size,
-						      slab_flags_t flags)
-{
-	struct kmem_cache *s = kmem_cache_zalloc(kmem_cache, GFP_NOWAIT);
-
-	if (!s)
-		panic("Out of memory when creating slab %s\n", name);
-
-	create_boot_cache(s, name, size, flags | SLAB_KMALLOC, 0, size);
-	list_add(&s->list, &slab_caches);
-	s->refcount = 1;
-	return s;
-}
+						      slab_flags_t flags);
 
 kmem_buckets kmalloc_caches[NR_KMALLOC_TYPES] __ro_after_init =
 { /* initialization for https://llvm.org/pr42570 */ };
@@ -795,27 +472,7 @@ u8 kmalloc_size_index[24] __ro_after_init = {
 	2	/* 192 */
 };
 
-size_t kmalloc_size_roundup(size_t size)
-{
-	if (size && size <= KMALLOC_MAX_CACHE_SIZE) {
-		/*
-		 * The flags don't matter since size_index is common to all.
-		 * Neither does the caller for just getting ->object_size.
-		 */
-		return kmalloc_slab(size, NULL, GFP_KERNEL, 0)->object_size;
-	}
-
-	/* Above the smaller buckets, size is a multiple of page size. */
-	if (size && size <= KMALLOC_MAX_SIZE)
-		return PAGE_SIZE << get_order(size);
-
-	/*
-	 * Return 'size' for 0 - kmalloc() returns ZERO_SIZE_PTR
-	 * and very large size - kmalloc() may fail.
-	 */
-	return size;
-
-}
+extern size_t kmalloc_size_roundup(size_t size);
 EXPORT_SYMBOL(kmalloc_size_roundup);
 
 #ifdef CONFIG_ZONE_DMA
@@ -909,41 +566,41 @@ const struct kmalloc_info_struct kmalloc_info[] __initconst = {
  * Make sure that nothing crazy happens if someone starts tinkering
  * around with ARCH_KMALLOC_MINALIGN
  */
-void __init setup_kmalloc_cache_index_table(void)
-{
-	unsigned int i;
+extern void __init setup_kmalloc_cache_index_table(void);
+// {
+// 	unsigned int i;
 
-	BUILD_BUG_ON(KMALLOC_MIN_SIZE > 256 ||
-		!is_power_of_2(KMALLOC_MIN_SIZE));
+// 	BUILD_BUG_ON(KMALLOC_MIN_SIZE > 256 ||
+// 		!is_power_of_2(KMALLOC_MIN_SIZE));
 
-	for (i = 8; i < KMALLOC_MIN_SIZE; i += 8) {
-		unsigned int elem = size_index_elem(i);
+// 	for (i = 8; i < KMALLOC_MIN_SIZE; i += 8) {
+// 		unsigned int elem = size_index_elem(i);
 
-		if (elem >= ARRAY_SIZE(kmalloc_size_index))
-			break;
-		kmalloc_size_index[elem] = KMALLOC_SHIFT_LOW;
-	}
+// 		if (elem >= ARRAY_SIZE(kmalloc_size_index))
+// 			break;
+// 		kmalloc_size_index[elem] = KMALLOC_SHIFT_LOW;
+// 	}
 
-	if (KMALLOC_MIN_SIZE >= 64) {
-		/*
-		 * The 96 byte sized cache is not used if the alignment
-		 * is 64 byte.
-		 */
-		for (i = 64 + 8; i <= 96; i += 8)
-			kmalloc_size_index[size_index_elem(i)] = 7;
+// 	if (KMALLOC_MIN_SIZE >= 64) {
+// 		/*
+// 		 * The 96 byte sized cache is not used if the alignment
+// 		 * is 64 byte.
+// 		 */
+// 		for (i = 64 + 8; i <= 96; i += 8)
+// 			kmalloc_size_index[size_index_elem(i)] = 7;
 
-	}
+// 	}
 
-	if (KMALLOC_MIN_SIZE >= 128) {
-		/*
-		 * The 192 byte sized cache is not used if the alignment
-		 * is 128 byte. Redirect kmalloc to use the 256 byte cache
-		 * instead.
-		 */
-		for (i = 128 + 8; i <= 192; i += 8)
-			kmalloc_size_index[size_index_elem(i)] = 8;
-	}
-}
+// 	if (KMALLOC_MIN_SIZE >= 128) {
+// 		/*
+// 		 * The 192 byte sized cache is not used if the alignment
+// 		 * is 128 byte. Redirect kmalloc to use the 256 byte cache
+// 		 * instead.
+// 		 */
+// 		for (i = 128 + 8; i <= 192; i += 8)
+// 			kmalloc_size_index[size_index_elem(i)] = 8;
+// 	}
+// }
 
 static unsigned int __kmalloc_minalign(void)
 {
