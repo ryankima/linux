@@ -171,10 +171,31 @@ bool mem_cgroup_kmem_disabled_link(void) {
 }
 EXPORT_SYMBOL(mem_cgroup_kmem_disabled_link);
 
+ struct folio *virt_to_folio_link(const void *x) {
+	return virt_to_folio(x);
+}
+EXPORT_SYMBOL(virt_to_folio_link);
+
+ void *folio_address_link(const struct folio *folio) {
+	return folio_address(folio);
+}
+EXPORT_SYMBOL(folio_address_link);
+
+ size_t folio_size_link(const struct folio *folio) {
+	return folio_size(folio);
+}
+EXPORT_SYMBOL(folio_size_link);
+
+ bool folio_test_slab_link(const struct folio *folio) {
+	return folio_test_slab(folio);
+}
+EXPORT_SYMBOL(folio_test_slab_link);
+void skip_orig_size_check_link(struct kmem_cache *s, const void *object) {
+	return skip_orig_size_check(s, object);
+}
+EXPORT_SYMBOL(skip_orig_size_check_link);
 EXPORT_SYMBOL(calculate_alignment);
-/*
- * Find a mergeable slab cache
- */
+
  
 extern int slab_unmergeable(struct kmem_cache *s);
 
@@ -486,81 +507,9 @@ extern const struct kmalloc_info_struct kmalloc_info[] __initconst = {
 
 extern void __init setup_kmalloc_cache_index_table(void);
 extern unsigned int __kmalloc_minalign(void);
-
 extern void __init new_kmalloc_cache(int idx, enum kmalloc_cache_type type);
-
-/*
- * Create the kmalloc array. Some of the regular kmalloc arrays
- * may already have been created because they were needed to
- * enable allocations for slab creation.
- */
 extern void __init create_kmalloc_caches(void);
-// {
-// 	int i;
-// 	enum kmalloc_cache_type type;
-
-// 	/*
-// 	 * Including KMALLOC_CGROUP if CONFIG_MEMCG defined
-// 	 */
-// 	for (type = KMALLOC_NORMAL; type < NR_KMALLOC_TYPES; type++) {
-// 		/* Caches that are NOT of the two-to-the-power-of size. */
-// 		if (KMALLOC_MIN_SIZE <= 32)
-// 			new_kmalloc_cache(1, type);
-// 		if (KMALLOC_MIN_SIZE <= 64)
-// 			new_kmalloc_cache(2, type);
-
-// 		/* Caches that are of the two-to-the-power-of size. */
-// 		for (i = KMALLOC_SHIFT_LOW; i <= KMALLOC_SHIFT_HIGH; i++)
-// 			new_kmalloc_cache(i, type);
-// 	}
-// #ifdef CONFIG_RANDOM_KMALLOC_CACHES
-// 	random_kmalloc_seed = get_random_u64();
-// #endif
-
-// 	/* Kmalloc array is now usable */
-// 	slab_state = UP;
-
-// 	if (IS_ENABLED(CONFIG_SLAB_BUCKETS))
-// 		kmem_buckets_cache = kmem_cache_create("kmalloc_buckets",
-// 						       sizeof(kmem_buckets),
-// 						       0, SLAB_NO_MERGE, NULL);
-// }
-
-/**
- * __ksize -- Report full size of underlying allocation
- * @object: pointer to the object
- *
- * This should only be used internally to query the true size of allocations.
- * It is not meant to be a way to discover the usable size of an allocation
- * after the fact. Instead, use kmalloc_size_roundup(). Using memory beyond
- * the originally requested allocation size may trigger KASAN, UBSAN_BOUNDS,
- * and/or FORTIFY_SOURCE.
- *
- * Return: size of the actual memory used by @object in bytes
- */
-size_t __ksize(const void *object)
-{
-	struct folio *folio;
-
-	if (unlikely(object == ZERO_SIZE_PTR))
-		return 0;
-
-	folio = virt_to_folio(object);
-
-	if (unlikely(!folio_test_slab(folio))) {
-		if (WARN_ON(folio_size(folio) <= KMALLOC_MAX_CACHE_SIZE))
-			return 0;
-		if (WARN_ON(object != folio_address(folio)))
-			return 0;
-		return folio_size(folio);
-	}
-
-#ifdef CONFIG_SLUB_DEBUG
-	skip_orig_size_check(folio_slab(folio)->slab_cache, object);
-#endif
-
-	return slab_ksize(folio_slab(folio)->slab_cache);
-}
+extern size_t __ksize(const void *object);
 
 gfp_t kmalloc_fix_flags(gfp_t flags)
 {

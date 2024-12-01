@@ -474,8 +474,6 @@ fn list_splice_init(list: *mut bindings::list_head,
     }
 }
 
-
-
 /*
  * Delete a list entry by making the prev/next entries
  * point to each other.
@@ -564,6 +562,31 @@ fn list_add_tail(new: *mut bindings::list_head, head: *mut bindings::list_head)
     }  
 }
  
+fn slab_ksize(s: &kmem_cache) -> usize
+{
+    if CONFIG_SLUB_DEBUG {
+        /*
+        * Debugging requires use of the padding between object
+        * and whatever may come after it.
+        */
+        if s.flags & (SLAB_RED_ZONE | SLAB_POISON) != 0 {
+            return s.object_size.try_into().unwrap();
+        }
+    }
+
+	/*
+	 * If we have the need to store the freelist pointer
+	 * back there or track user information then we can
+	 * only use the space before that information.
+	 */
+	if s.flags & (SLAB_TYPESAFE_BY_RCU | SLAB_STORE_USER) != 0{
+		return s.inuse.try_into().unwrap();
+    }
+	/*
+	 * Else we can use all the padding etc for the allocation
+	 */
+	return s.size.try_into().unwrap();
+}
 
 /**************************** BEGIN FUNCTION DEFINITIONS ********************************/
 extern "C" {
@@ -721,6 +744,12 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn arch_slab_minalign_link() -> u32;
     pub fn mem_cgroup_kmem_disabled_link() -> bool;
     pub fn get_random_u64() -> u64;
+
+    pub fn virt_to_folio_link(x: *const c_void) -> *mut bindings::folio;
+    pub fn folio_address_link(folio: *mut bindings::folio) -> *const c_void;
+    pub fn folio_size_link(folio: *mut bindings::folio) -> usize;
+    pub fn folio_test_slab_link(folio: *mut bindings::folio) -> bool;
+    pub fn skip_orig_size_check_link(s: *mut kmem_cache, object: *const c_void);
 
     // TODO: Remove these later
 }
@@ -1643,7 +1672,7 @@ pub extern "C" fn create_kmalloc_caches()
                                 0, SLAB_NO_MERGE, core::ptr::null_mut());}
      }
  }
- /*
+ 
  /**
   * __ksize -- Report full size of underlying allocation
   * @object: pointer to the object
@@ -1656,30 +1685,28 @@ pub extern "C" fn create_kmalloc_caches()
   *
   * Return: size of the actual memory used by @object in bytes
   */
- size_t __ksize(const void *object)
+#[no_mangle]
+ pub extern "C" fn __ksize(object: *const c_void) -> usize
  {
-     struct folio *folio;
+     let mut folio: *mut bindings::folio = unsafe { virt_to_folio_link(object) };
  
-     if (unlikely(object == ZERO_SIZE_PTR))
-         return 0;
- 
-     folio = virt_to_folio(object);
- 
-     if (unlikely(!folio_test_slab(folio))) {
-         if (WARN_ON(folio_size(folio) <= KMALLOC_MAX_CACHE_SIZE))
+     if unsafe{!folio_test_slab_link(folio)} {
+         if unsafe {folio_size_link(folio)} <= KMALLOC_MAX_CACHE_SIZE.try_into().unwrap() {
              return 0;
-         if (WARN_ON(object != folio_address(folio)))
+         }
+         if object != unsafe{folio_address_link(folio)} {
              return 0;
-         return folio_size(folio);
+         }
+         return unsafe {folio_size_link(folio)};
      }
  
- #ifdef CONFIG_SLUB_DEBUG
-     skip_orig_size_check(folio_slab(folio)->slab_cache, object);
- #endif
+    if CONFIG_SLUB_DEBUG {
+        unsafe{skip_orig_size_check_link((*(folio as *mut slab)).slab_cache, object)};
+    }
  
-     return slab_ksize(folio_slab(folio)->slab_cache);
+     return slab_ksize(unsafe {&*(*(folio as *mut slab)).slab_cache});
  }
- 
+ /*
  gfp_t kmalloc_fix_flags(gfp_t flags)
  {
      gfp_t invalid_mask = flags & GFP_SLAB_BUG_MASK;
