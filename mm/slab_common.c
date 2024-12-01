@@ -194,6 +194,16 @@ void skip_orig_size_check_link(struct kmem_cache *s, const void *object) {
 	return skip_orig_size_check(s, object);
 }
 EXPORT_SYMBOL(skip_orig_size_check_link);
+
+void *kcalloc_link(unsigned long n, unsigned long size, gfp_t flags) {
+	return kmalloc_array(n, size, (flags) | __GFP_ZERO);
+}		
+EXPORT_SYMBOL(kcalloc_link);
+
+unsigned long get_random_u32_below_link(unsigned long i) {
+	return get_random_u32_below(i);
+}
+EXPORT_SYMBOL(get_random_u32_below_link);
 EXPORT_SYMBOL(calculate_alignment);
 
  
@@ -510,52 +520,42 @@ extern unsigned int __kmalloc_minalign(void);
 extern void __init new_kmalloc_cache(int idx, enum kmalloc_cache_type type);
 extern void __init create_kmalloc_caches(void);
 extern size_t __ksize(const void *object);
+extern gfp_t kmalloc_fix_flags(gfp_t flags);
 
-gfp_t kmalloc_fix_flags(gfp_t flags)
-{
-	gfp_t invalid_mask = flags & GFP_SLAB_BUG_MASK;
-
-	flags &= ~GFP_SLAB_BUG_MASK;
-	pr_warn("Unexpected gfp: %#x (%pGg). Fixing up to gfp: %#x (%pGg). Fix your code!\n",
-			invalid_mask, &invalid_mask, flags, &flags);
-	dump_stack();
-
-	return flags;
-}
 
 #ifdef CONFIG_SLAB_FREELIST_RANDOM
 /* Randomize a generic freelist */
-static void freelist_randomize(unsigned int *list,
-			       unsigned int count)
-{
-	unsigned int rand;
-	unsigned int i;
+extern void freelist_randomize(unsigned int *list,
+			       unsigned int count);
+// {
+// 	unsigned int rand;
+// 	unsigned int i;
 
-	for (i = 0; i < count; i++)
-		list[i] = i;
+// 	for (i = 0; i < count; i++)
+// 		list[i] = i;
 
-	/* Fisher-Yates shuffle */
-	for (i = count - 1; i > 0; i--) {
-		rand = get_random_u32_below(i + 1);
-		swap(list[i], list[rand]);
-	}
-}
+// 	/* Fisher-Yates shuffle */
+// 	for (i = count - 1; i > 0; i--) {
+// 		rand = get_random_u32_below(i + 1);
+// 		swap(list[i], list[rand]);
+// 	}
+// }
 
 /* Create a random sequence per cache */
-int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count,
-				    gfp_t gfp)
-{
+extern int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count,
+				    gfp_t gfp);
+// {
 
-	if (count < 2 || cachep->random_seq)
-		return 0;
+// 	if (count < 2 || cachep->random_seq)
+// 		return 0;
 
-	cachep->random_seq = kcalloc(count, sizeof(unsigned int), gfp);
-	if (!cachep->random_seq)
-		return -ENOMEM;
+// 	cachep->random_seq = kcalloc(count, sizeof(unsigned int), gfp);
+// 	if (!cachep->random_seq)
+// 		return -ENOMEM;
 
-	freelist_randomize(cachep->random_seq, count);
-	return 0;
-}
+// 	freelist_randomize(cachep->random_seq, count);
+// 	return 0;
+// }
 
 /* Destroy the per-cache random freelist sequence */
 void cache_random_seq_destroy(struct kmem_cache *cachep)

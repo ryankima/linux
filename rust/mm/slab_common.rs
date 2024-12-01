@@ -744,13 +744,14 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn arch_slab_minalign_link() -> u32;
     pub fn mem_cgroup_kmem_disabled_link() -> bool;
     pub fn get_random_u64() -> u64;
+    pub fn get_random_u32_below_link(b: u32) -> u32;
 
     pub fn virt_to_folio_link(x: *const c_void) -> *mut bindings::folio;
     pub fn folio_address_link(folio: *mut bindings::folio) -> *const c_void;
     pub fn folio_size_link(folio: *mut bindings::folio) -> usize;
     pub fn folio_test_slab_link(folio: *mut bindings::folio) -> bool;
     pub fn skip_orig_size_check_link(s: *mut kmem_cache, object: *const c_void);
-
+    pub fn kcalloc_link(n: u32, size: u32, flags: gfp_t) -> *mut c_void;
     // TODO: Remove these later
 }
 
@@ -1706,60 +1707,62 @@ pub extern "C" fn create_kmalloc_caches()
  
      return slab_ksize(unsafe {&*(*(folio as *mut slab)).slab_cache});
  }
- /*
- gfp_t kmalloc_fix_flags(gfp_t flags)
+ 
+ #[no_mangle]
+ pub extern "C" fn kmalloc_fix_flags(flags: gfp_t) -> gfp_t
  {
-     gfp_t invalid_mask = flags & GFP_SLAB_BUG_MASK;
- 
-     flags &= ~GFP_SLAB_BUG_MASK;
-     pr_warn("Unexpected gfp: %#x (%pGg). Fixing up to gfp: %#x (%pGg). Fix your code!\n",
-             invalid_mask, &invalid_mask, flags, &flags);
-     dump_stack();
- 
+    unsafe {panic("Fix your code, the flags can't be fixed with this version\n".as_ptr() as *const i8)};
      return flags;
  }
  
- #ifdef CONFIG_SLAB_FREELIST_RANDOM
  /* Randomize a generic freelist */
- static void freelist_randomize(unsigned int *list,
-                    unsigned int count)
+ #[no_mangle]
+ pub extern "C" fn freelist_randomize(list: *mut u32, count: u32)
  {
-     unsigned int rand;
-     unsigned int i;
+     let mut i: u32 = 0;
  
-     for (i = 0; i < count; i++)
-         list[i] = i;
+     while i < count {
+         unsafe{*list.wrapping_add(i.try_into().unwrap()) = i};
+         i += 1;
+     }
  
      /* Fisher-Yates shuffle */
-     for (i = count - 1; i > 0; i--) {
-         rand = get_random_u32_below(i + 1);
-         swap(list[i], list[rand]);
+     i = count - 1;
+     while i > 0 {
+        unsafe {
+            let rand: u32 = get_random_u32_below_link(i + 1);
+            let t: u32 = *(list.wrapping_add(i.try_into().unwrap()));
+            *(list.wrapping_add(i.try_into().unwrap())) = *(list.wrapping_add(rand.try_into().unwrap()));
+            *(list.wrapping_add(rand.try_into().unwrap())) = t;
+        }
+        i -= 1;
      }
  }
  
  /* Create a random sequence per cache */
- int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count,
-                     gfp_t gfp)
+ #[no_mangle]
+ pub extern "C" fn cache_random_seq_create(cachep: *mut kmem_cache, count: u32, gfp: gfp_t) -> i32
  {
  
-     if (count < 2 || cachep->random_seq)
+     if count < 2 || unsafe {(*cachep).random_seq != core::ptr::null_mut()} {
          return 0;
+     }
  
-     cachep->random_seq = kcalloc(count, sizeof(unsigned int), gfp);
-     if (!cachep->random_seq)
-         return -ENOMEM;
+     unsafe {(*cachep).random_seq = kcalloc_link(count, core::mem::size_of::<u32>() as u32, gfp) as *mut u32};
+     if unsafe {(*cachep).random_seq} == core::ptr::null_mut(){
+         return -(ENOMEM as i32);
+     }
  
-     freelist_randomize(cachep->random_seq, count);
+     freelist_randomize(unsafe{(*cachep).random_seq}, count);
      return 0;
  }
- 
+ /*
  /* Destroy the per-cache random freelist sequence */
  void cache_random_seq_destroy(struct kmem_cache *cachep)
  {
      kfree(cachep->random_seq);
      cachep->random_seq = NULL;
  }
- #endif /* CONFIG_SLAB_FREELIST_RANDOM */
  
 
  static __always_inline __realloc_size(2) void *
