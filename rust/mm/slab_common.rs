@@ -1756,15 +1756,18 @@ pub extern "C" fn create_kmalloc_caches()
      freelist_randomize(unsafe{(*cachep).random_seq}, count);
      return 0;
  }
- /*
+ 
  /* Destroy the per-cache random freelist sequence */
- void cache_random_seq_destroy(struct kmem_cache *cachep)
+ #[no_mangle]
+ pub extern "C" fn cache_random_seq_destroy(cachep: *mut kmem_cache)
  {
-     kfree(cachep->random_seq);
-     cachep->random_seq = NULL;
+    unsafe {
+        kfree((*cachep).random_seq as *const c_void);
+        (*cachep).random_seq = core::ptr::null_mut();
+    }
  }
  
-
+/*
  static __always_inline __realloc_size(2) void *
  __do_krealloc(const void *p, size_t new_size, gfp_t flags)
  {

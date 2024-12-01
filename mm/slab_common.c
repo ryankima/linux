@@ -524,45 +524,16 @@ extern gfp_t kmalloc_fix_flags(gfp_t flags);
 
 
 #ifdef CONFIG_SLAB_FREELIST_RANDOM
-/* Randomize a generic freelist */
-extern void freelist_randomize(unsigned int *list,
-			       unsigned int count);
-// {
-// 	unsigned int rand;
-// 	unsigned int i;
+extern void freelist_randomize(unsigned int *list, unsigned int count);
+extern int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count, gfp_t gfp);
 
-// 	for (i = 0; i < count; i++)
-// 		list[i] = i;
-
-// 	/* Fisher-Yates shuffle */
-// 	for (i = count - 1; i > 0; i--) {
-// 		rand = get_random_u32_below(i + 1);
-// 		swap(list[i], list[rand]);
-// 	}
-// }
-
-/* Create a random sequence per cache */
-extern int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count,
-				    gfp_t gfp);
-// {
-
-// 	if (count < 2 || cachep->random_seq)
-// 		return 0;
-
-// 	cachep->random_seq = kcalloc(count, sizeof(unsigned int), gfp);
-// 	if (!cachep->random_seq)
-// 		return -ENOMEM;
-
-// 	freelist_randomize(cachep->random_seq, count);
-// 	return 0;
-// }
 
 /* Destroy the per-cache random freelist sequence */
-void cache_random_seq_destroy(struct kmem_cache *cachep)
-{
-	kfree(cachep->random_seq);
-	cachep->random_seq = NULL;
-}
+extern void cache_random_seq_destroy(struct kmem_cache *cachep);
+// {
+// 	kfree(cachep->random_seq);
+// 	cachep->random_seq = NULL;
+// }
 #endif /* CONFIG_SLAB_FREELIST_RANDOM */
 
 #ifdef CONFIG_SLUB_DEBUG
