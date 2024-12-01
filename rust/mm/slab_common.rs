@@ -316,6 +316,8 @@ pub enum slab_state_t {
 	FULL			/* Everything is working */
 }
 
+const ZERO_SIZE_PTR: *mut c_void = 16 as *mut c_void;
+
 const slab_nomerge: bool = true; // TODO: check if this is actually false
 const SLAB_HWCACHE_ALIGN: u32 = 1 << (_slab_flag_bits::_SLAB_HWCACHE_ALIGN as u32);
 const SLAB_RED_ZONE: u32 = 1 << (_slab_flag_bits::_SLAB_RED_ZONE as u32);
@@ -752,7 +754,19 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn folio_test_slab_link(folio: *mut bindings::folio) -> bool;
     pub fn skip_orig_size_check_link(s: *mut kmem_cache, object: *const c_void);
     pub fn kcalloc_link(n: u32, size: u32, flags: gfp_t) -> *mut c_void;
+
+    pub fn kasan_enable_current_link();
+    pub fn kasan_disable_current_link();
+    pub fn memzero_explicit_link(s: *const c_void, count: usize);
+    pub fn kasan_unpoison_range_link(s: *const c_void, count: usize);
+    pub fn kasan_krealloc_link(object: *const c_void, new_size: usize, flags: gfp_t) -> *const c_void;
+    pub fn __kmalloc_node_track_caller_noprof(size: usize, b: *mut bindings::kmem_buckets, flags: gfp_t, node: i32, caller: u32) -> *const c_void;
+    pub fn kasan_reset_tag_link(addr: *const c_void) -> *const c_void;
+    pub fn kasan_check_byte_link(addr: *const c_void) -> bool;
+    pub fn kfence_ksize_link(addr: *const c_void) -> usize;
+
     // TODO: Remove these later
+    //pub fn ksize(objp: *const c_void) -> usize;
 }
 
 #[no_mangle]
@@ -1767,33 +1781,32 @@ pub extern "C" fn create_kmalloc_caches()
     }
  }
  
-/*
- static __always_inline __realloc_size(2) void *
- __do_krealloc(const void *p, size_t new_size, gfp_t flags)
+
+ #[no_mangle]
+ pub extern "C" fn __do_krealloc(mut p: *const c_void, new_size: usize, flags: gfp_t) -> *const c_void
  {
-     void *ret;
-     size_t ks;
+     let mut ret: *mut c_void;
+     let mut ks: usize = 0;
  
      /* Check for double-free before calling ksize. */
-     if (likely(!ZERO_OR_NULL_PTR(p))) {
-         if (!kasan_check_byte(p))
-             return NULL;
-         ks = ksize(p);
-     } else
-         ks = 0;
- 
-     /* If the object still fits, repoison it precisely. */
-     if (ks >= new_size) {
-         p = kasan_krealloc((void *)p, new_size, flags);
-         return (void *)p;
+     if p != core::ptr::null_mut() {
+         ks = unsafe { ksize(p)};
      }
  
-     ret = kmalloc_node_track_caller_noprof(new_size, flags, NUMA_NO_NODE, _RET_IP_);
-     if (ret && p) {
+     /* If the object still fits, repoison it precisely. */
+     if ks >= new_size {
+         p = unsafe {kasan_krealloc_link(p, new_size, flags)};
+         return p;
+     }
+
+     ret = unsafe {__kmalloc_node_track_caller_noprof(new_size, core::ptr::null_mut(), flags, bindings::NUMA_NO_NODE, 0) as *mut c_void};
+     if ret != core::ptr::null_mut()  && p != core::ptr::null_mut() {
          /* Disable KASAN checks as the object's redzone is accessed. */
-         kasan_disable_current();
-         memcpy(ret, kasan_reset_tag(p), ks);
-         kasan_enable_current();
+         unsafe {
+            kasan_disable_current_link();
+            bindings::memcpy(ret, p, ks as u64);
+            kasan_enable_current_link();
+         }
      }
  
      return ret;
@@ -1812,22 +1825,22 @@ pub extern "C" fn create_kmalloc_caches()
   *
   * Return: pointer to the allocated memory or %NULL in case of error
   */
- void *krealloc_noprof(const void *p, size_t new_size, gfp_t flags)
+  
+  #[no_mangle]
+pub extern "C" fn krealloc_noprof(p: *const c_void, new_size: usize, flags: gfp_t) -> *const c_void
  {
-     void *ret;
- 
-     if (unlikely(!new_size)) {
-         kfree(p);
-         return ZERO_SIZE_PTR;
+     if new_size == 0 {
+         unsafe {kfree(p)};
+         return core::ptr::null_mut();
      }
  
-     ret = __do_krealloc(p, new_size, flags);
-     if (ret && kasan_reset_tag(p) != kasan_reset_tag(ret))
-         kfree(p);
+     let ret: *const c_void = __do_krealloc(p, new_size, flags);;
+     if ret != core::ptr::null_mut() && unsafe {kasan_reset_tag_link(p) != kasan_reset_tag_link(ret)} {
+        unsafe {kfree(p)};
+     }
  
      return ret;
  }
- EXPORT_SYMBOL(krealloc_noprof);
  
  /**
   * kfree_sensitive - Clear sensitive information in memory before freeing
@@ -1840,20 +1853,22 @@ pub extern "C" fn create_kmalloc_caches()
   * deal bigger than the requested buffer size passed to kmalloc(). So be
   * careful when using this function in performance sensitive code.
   */
- void kfree_sensitive(const void *p)
+  #[no_mangle]
+ pub extern "C" fn kfree_sensitive(p: *mut c_void)
  {
-     size_t ks;
-     void *mem = (void *)p;
+     let ks: usize = unsafe{ksize(p)};
  
-     ks = ksize(mem);
-     if (ks) {
-         kasan_unpoison_range(mem, ks);
-         memzero_explicit(mem, ks);
+     if ks != 0 {
+        unsafe {
+            kasan_unpoison_range_link(p, ks);
+            memzero_explicit_link(p, ks);
+        }
      }
-     kfree(mem);
+     unsafe {kfree(p)};
  }
  
- size_t ksize(const void *objp)
+ #[no_mangle]
+pub extern "C" fn ksize(objp: *const c_void) -> usize
  {
      /*
       * We need to first check that the pointer to the object is valid.
@@ -1870,11 +1885,16 @@ pub extern "C" fn create_kmalloc_caches()
       * We want to perform the check before __ksize(), to avoid potentially
       * crashing in __ksize() due to accessing invalid metadata.
       */
-     if (unlikely(ZERO_OR_NULL_PTR(objp)) || !kasan_check_byte(objp))
-         return 0;
- 
-     return kfence_ksize(objp) ?: __ksize(objp);
- }*/
+    if objp <= ZERO_SIZE_PTR || !unsafe{kasan_check_byte_link(objp)} {
+        return 0;
+    }
+    let sz: usize = unsafe {kfence_ksize_link(objp)};
+    if sz != 0 { 
+        return sz; 
+    } else { 
+        __ksize(objp) 
+    }
+ }
 
 #[no_mangle]
 pub extern "C" fn kmem_cache_size(s: *const kmem_cache) -> u32 {

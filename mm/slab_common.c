@@ -117,76 +117,62 @@ bool schedule_work_link(struct work_struct *work)
 	return schedule_work(work);
 }
 EXPORT_SYMBOL(schedule_work_link);
-
 void kasan_cache_shutdown_link(struct kmem_cache *cache) {
 	kasan_cache_shutdown(cache);
 }
 EXPORT_SYMBOL(kasan_cache_shutdown_link);
-
 void kasan_cache_shrink_link(struct kmem_cache *cache) {
 	kasan_cache_shrink(cache);
 }
 EXPORT_SYMBOL(kasan_cache_shrink_link);
-
 struct kmem_cache *kmem_cache_create_kernel_link(void) {
 	return kmem_cache_zalloc(kmem_cache, GFP_KERNEL);
 }
 EXPORT_SYMBOL(kmem_cache_create_kernel_link);
-
 struct kmem_cache *kmem_cache_create_nowait_link(void) {
 	return kmem_cache_zalloc(kmem_cache, GFP_NOWAIT);
 }
 EXPORT_SYMBOL(kmem_cache_create_nowait_link);
-
 struct kmem_cache *
 kmalloc_slab_link(size_t size, kmem_buckets *b, gfp_t flags, unsigned long caller) {
 	return kmalloc_slab(size, b, flags, caller);
 }
 EXPORT_SYMBOL(kmalloc_slab_link);
-
 int get_order_link(unsigned long size)
 {
 	return get_order(size);
 }
 EXPORT_SYMBOL(get_order_link);
-
 unsigned long dma_get_cache_alignment_link(void) {
 	return dma_get_cache_alignment();
 }
 EXPORT_SYMBOL(dma_get_cache_alignment_link);
-
 unsigned long config_dma_bounce_unaligned_link(void) {
 	return IS_ENABLED(CONFIG_DMA_BOUNCE_UNALIGNED_KMALLOC) &&
 	    is_swiotlb_allocated();
 }
 EXPORT_SYMBOL(config_dma_bounce_unaligned_link);
-
 unsigned long arch_slab_minalign_link(void) {
 	return arch_slab_minalign();
 }
 EXPORT_SYMBOL(arch_slab_minalign_link);
-
 bool mem_cgroup_kmem_disabled_link(void) {
 	return mem_cgroup_kmem_disabled();
 }
 EXPORT_SYMBOL(mem_cgroup_kmem_disabled_link);
-
- struct folio *virt_to_folio_link(const void *x) {
+struct folio *virt_to_folio_link(const void *x) {
 	return virt_to_folio(x);
 }
 EXPORT_SYMBOL(virt_to_folio_link);
-
- void *folio_address_link(const struct folio *folio) {
+void *folio_address_link(const struct folio *folio) {
 	return folio_address(folio);
 }
 EXPORT_SYMBOL(folio_address_link);
-
- size_t folio_size_link(const struct folio *folio) {
+size_t folio_size_link(const struct folio *folio) {
 	return folio_size(folio);
 }
 EXPORT_SYMBOL(folio_size_link);
-
- bool folio_test_slab_link(const struct folio *folio) {
+bool folio_test_slab_link(const struct folio *folio) {
 	return folio_test_slab(folio);
 }
 EXPORT_SYMBOL(folio_test_slab_link);
@@ -194,73 +180,52 @@ void skip_orig_size_check_link(struct kmem_cache *s, const void *object) {
 	return skip_orig_size_check(s, object);
 }
 EXPORT_SYMBOL(skip_orig_size_check_link);
-
 void *kcalloc_link(unsigned long n, unsigned long size, gfp_t flags) {
 	return kmalloc_array(n, size, (flags) | __GFP_ZERO);
 }		
 EXPORT_SYMBOL(kcalloc_link);
-
 unsigned long get_random_u32_below_link(unsigned long i) {
 	return get_random_u32_below(i);
 }
 EXPORT_SYMBOL(get_random_u32_below_link);
+const void* kasan_krealloc_link(const void* object, size_t new_size, gfp_t flags)  {
+	return kasan_krealloc(object, new_size, flags);
+}
+EXPORT_SYMBOL(kasan_krealloc_link);
+void kasan_enable_current_link(void) {
+	kasan_enable_current();
+}
+EXPORT_SYMBOL(kasan_enable_current_link);
+void kasan_disable_current_link(void) {
+	kasan_disable_current();
+}
+EXPORT_SYMBOL(kasan_disable_current_link);
+void *kasan_reset_tag_link(const void *addr) {
+	return kasan_reset_tag(addr);
+}
+EXPORT_SYMBOL(kasan_reset_tag_link);
+bool kasan_check_byte_link(const void *addr) {
+	return kasan_check_byte(addr);
+}
+size_t kfence_ksize_link(const void *addr) {
+	return kfence_ksize(addr);
+}
+EXPORT_SYMBOL(kfence_ksize_link);
+void memzero_explicit_link (void* s, size_t count) {
+	memzero_explicit(s, count);
+}
+void kasan_unpoison_range_link (const void* s, size_t count) {
+	kasan_unpoison_range(s, count);
+}
 EXPORT_SYMBOL(calculate_alignment);
-
- 
 extern int slab_unmergeable(struct kmem_cache *s);
-
-
 extern struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
  		slab_flags_t flags, const char *name, void (*ctor)(void *));
-// struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
-// 		slab_flags_t flags, const char *name, void (*ctor)(void *))
-// {
-// 	struct kmem_cache *s;
-
-// 	if (slab_nomerge)
-// 		return NULL;
-
-// 	if (ctor)
-// 		return NULL;
-
-// 	size = ALIGN(size, sizeof(void *));
-// 	align = calculate_alignment(flags, align, size);
-// 	size = ALIGN(size, align);
-// flags = kmem_cache_flags(flags, name);
-
-// 	if (flags & SLAB_NEVER_MERGE)
-// 		return NULL;
-
-// 	list_for_each_entry_reverse(s, &slab_caches, list) {
-// 		if (slab_unmergeable(s))
-// 			continue;
-
-// 		if (size > s->size)
-// 			continue;
-
-// 		if ((flags & SLAB_MERGE_SAME) != (s->flags & SLAB_MERGE_SAME))
-// 			continue;
-// 		/*
-// 		 * Check if alignment is compatible.
-// 		 * Courtesy of Adrian Drzewiecki
-// 		 */
-// 		if ((s->size & ~(align - 1)) != s->size)
-// 			continue;
-
-// 		if (s->size - size >= sizeof(void *))
-// 			continue;
-
-// 		return s;
-// 	}
-// 	return NULL;
-// }
-
 extern struct kmem_cache *create_cache(const char *name,
 		unsigned int object_size, unsigned int align,
 		slab_flags_t flags, unsigned int useroffset,
 		unsigned int usersize, void (*ctor)(void *),
 		struct kmem_cache *root_cache);
-
 extern struct kmem_cache *
 kmem_cache_create_usercopy(const char *name,
 		  unsigned int size, unsigned int align,
@@ -526,14 +491,7 @@ extern gfp_t kmalloc_fix_flags(gfp_t flags);
 #ifdef CONFIG_SLAB_FREELIST_RANDOM
 extern void freelist_randomize(unsigned int *list, unsigned int count);
 extern int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count, gfp_t gfp);
-
-
-/* Destroy the per-cache random freelist sequence */
 extern void cache_random_seq_destroy(struct kmem_cache *cachep);
-// {
-// 	kfree(cachep->random_seq);
-// 	cachep->random_seq = NULL;
-// }
 #endif /* CONFIG_SLAB_FREELIST_RANDOM */
 
 #ifdef CONFIG_SLUB_DEBUG
@@ -672,114 +630,15 @@ module_init(slab_proc_init);
 
 #endif /* CONFIG_SLUB_DEBUG */
 
-static __always_inline __realloc_size(2) void *
-__do_krealloc(const void *p, size_t new_size, gfp_t flags)
-{
-	void *ret;
-	size_t ks;
-
-	/* Check for double-free before calling ksize. */
-	if (likely(!ZERO_OR_NULL_PTR(p))) {
-		if (!kasan_check_byte(p))
-			return NULL;
-		ks = ksize(p);
-	} else
-		ks = 0;
-
-	/* If the object still fits, repoison it precisely. */
-	if (ks >= new_size) {
-		p = kasan_krealloc((void *)p, new_size, flags);
-		return (void *)p;
-	}
-
-	ret = kmalloc_node_track_caller_noprof(new_size, flags, NUMA_NO_NODE, _RET_IP_);
-	if (ret && p) {
-		/* Disable KASAN checks as the object's redzone is accessed. */
-		kasan_disable_current();
-		memcpy(ret, kasan_reset_tag(p), ks);
-		kasan_enable_current();
-	}
-
-	return ret;
-}
-
-/**
- * krealloc - reallocate memory. The contents will remain unchanged.
- * @p: object to reallocate memory for.
- * @new_size: how many bytes of memory are required.
- * @flags: the type of memory to allocate.
- *
- * The contents of the object pointed to are preserved up to the
- * lesser of the new and old sizes (__GFP_ZERO flag is effectively ignored).
- * If @p is %NULL, krealloc() behaves exactly like kmalloc().  If @new_size
- * is 0 and @p is not a %NULL pointer, the object pointed to is freed.
- *
- * Return: pointer to the allocated memory or %NULL in case of error
- */
-void *krealloc_noprof(const void *p, size_t new_size, gfp_t flags)
-{
-	void *ret;
-
-	if (unlikely(!new_size)) {
-		kfree(p);
-		return ZERO_SIZE_PTR;
-	}
-
-	ret = __do_krealloc(p, new_size, flags);
-	if (ret && kasan_reset_tag(p) != kasan_reset_tag(ret))
-		kfree(p);
-
-	return ret;
-}
+extern __always_inline __realloc_size(2) void *
+__do_krealloc(const void *p, size_t new_size, gfp_t flags);
+extern void *krealloc_noprof(const void *p, size_t new_size, gfp_t flags);
 EXPORT_SYMBOL(krealloc_noprof);
 
-/**
- * kfree_sensitive - Clear sensitive information in memory before freeing
- * @p: object to free memory of
- *
- * The memory of the object @p points to is zeroed before freed.
- * If @p is %NULL, kfree_sensitive() does nothing.
- *
- * Note: this function zeroes the whole allocated buffer which can be a good
- * deal bigger than the requested buffer size passed to kmalloc(). So be
- * careful when using this function in performance sensitive code.
- */
-void kfree_sensitive(const void *p)
-{
-	size_t ks;
-	void *mem = (void *)p;
-
-	ks = ksize(mem);
-	if (ks) {
-		kasan_unpoison_range(mem, ks);
-		memzero_explicit(mem, ks);
-	}
-	kfree(mem);
-}
+void kfree_sensitive(const void *p);
 EXPORT_SYMBOL(kfree_sensitive);
 
-size_t ksize(const void *objp)
-{
-	/*
-	 * We need to first check that the pointer to the object is valid.
-	 * The KASAN report printed from ksize() is more useful, then when
-	 * it's printed later when the behaviour could be undefined due to
-	 * a potential use-after-free or double-free.
-	 *
-	 * We use kasan_check_byte(), which is supported for the hardware
-	 * tag-based KASAN mode, unlike kasan_check_read/write().
-	 *
-	 * If the pointed to memory is invalid, we return 0 to avoid users of
-	 * ksize() writing to and potentially corrupting the memory region.
-	 *
-	 * We want to perform the check before __ksize(), to avoid potentially
-	 * crashing in __ksize() due to accessing invalid metadata.
-	 */
-	if (unlikely(ZERO_OR_NULL_PTR(objp)) || !kasan_check_byte(objp))
-		return 0;
-
-	return kfence_ksize(objp) ?: __ksize(objp);
-}
+size_t ksize(const void *objp);
 EXPORT_SYMBOL(ksize);
 
 /* Tracepoints definitions. */
