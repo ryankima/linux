@@ -488,85 +488,43 @@ extern void __init setup_kmalloc_cache_index_table(void);
 extern unsigned int __kmalloc_minalign(void);
 
 extern void __init new_kmalloc_cache(int idx, enum kmalloc_cache_type type);
-// {
-// 	slab_flags_t flags = 0;
-// 	unsigned int minalign = __kmalloc_minalign();
-// 	unsigned int aligned_size = kmalloc_info[idx].size;
-// 	int aligned_idx = idx;
-
-// 	if ((KMALLOC_RECLAIM != KMALLOC_NORMAL) && (type == KMALLOC_RECLAIM)) {
-// 		flags |= SLAB_RECLAIM_ACCOUNT;
-// 	} else if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_CGROUP)) {
-// 		if (mem_cgroup_kmem_disabled()) {
-// 			kmalloc_caches[type][idx] = kmalloc_caches[KMALLOC_NORMAL][idx];
-// 			return;
-// 		}
-// 		flags |= SLAB_ACCOUNT;
-// 	} else if (IS_ENABLED(CONFIG_ZONE_DMA) && (type == KMALLOC_DMA)) {
-// 		flags |= SLAB_CACHE_DMA;
-// 	}
-
-// #ifdef CONFIG_RANDOM_KMALLOC_CACHES
-// 	if (type >= KMALLOC_RANDOM_START && type <= KMALLOC_RANDOM_END)
-// 		flags |= SLAB_NO_MERGE;
-// #endif
-
-// 	/*
-// 	 * If CONFIG_MEMCG is enabled, disable cache merging for
-// 	 * KMALLOC_NORMAL caches.
-// 	 */
-// 	if (IS_ENABLED(CONFIG_MEMCG) && (type == KMALLOC_NORMAL))
-// 		flags |= SLAB_NO_MERGE;
-
-// 	if (minalign > ARCH_KMALLOC_MINALIGN) {
-// 		aligned_size = ALIGN(aligned_size, minalign);
-// 		aligned_idx = __kmalloc_index(aligned_size, false);
-// 	}
-
-// 	if (!kmalloc_caches[type][aligned_idx])
-// 		kmalloc_caches[type][aligned_idx] = create_kmalloc_cache(
-// 					kmalloc_info[aligned_idx].name[type],
-// 					aligned_size, flags);
-// 	if (idx != aligned_idx)
-// 		kmalloc_caches[type][idx] = kmalloc_caches[type][aligned_idx];
-// }
 
 /*
  * Create the kmalloc array. Some of the regular kmalloc arrays
  * may already have been created because they were needed to
  * enable allocations for slab creation.
  */
-void __init create_kmalloc_caches(void)
-{
-	int i;
-	enum kmalloc_cache_type type;
+extern void __init create_kmalloc_caches(void);
+// {
+// 	int i;
+// 	enum kmalloc_cache_type type;
 
-	/*
-	 * Including KMALLOC_CGROUP if CONFIG_MEMCG defined
-	 */
-	for (type = KMALLOC_NORMAL; type < NR_KMALLOC_TYPES; type++) {
-		/* Caches that are NOT of the two-to-the-power-of size. */
-		if (KMALLOC_MIN_SIZE <= 32)
-			new_kmalloc_cache(1, type);
-		if (KMALLOC_MIN_SIZE <= 64)
-			new_kmalloc_cache(2, type);
+// 	/*
+// 	 * Including KMALLOC_CGROUP if CONFIG_MEMCG defined
+// 	 */
+// 	for (type = KMALLOC_NORMAL; type < NR_KMALLOC_TYPES; type++) {
+// 		/* Caches that are NOT of the two-to-the-power-of size. */
+// 		if (KMALLOC_MIN_SIZE <= 32)
+// 			new_kmalloc_cache(1, type);
+// 		if (KMALLOC_MIN_SIZE <= 64)
+// 			new_kmalloc_cache(2, type);
 
-		/* Caches that are of the two-to-the-power-of size. */
-		for (i = KMALLOC_SHIFT_LOW; i <= KMALLOC_SHIFT_HIGH; i++)
-			new_kmalloc_cache(i, type);
-	}
-#ifdef CONFIG_RANDOM_KMALLOC_CACHES
-	random_kmalloc_seed = get_random_u64();
-#endif
+// 		/* Caches that are of the two-to-the-power-of size. */
+// 		for (i = KMALLOC_SHIFT_LOW; i <= KMALLOC_SHIFT_HIGH; i++)
+// 			new_kmalloc_cache(i, type);
+// 	}
+// #ifdef CONFIG_RANDOM_KMALLOC_CACHES
+// 	random_kmalloc_seed = get_random_u64();
+// #endif
 
-	/* Kmalloc array is now usable */
-	slab_state = UP;
+// 	/* Kmalloc array is now usable */
+// 	slab_state = UP;
 
-	if (IS_ENABLED(CONFIG_SLAB_BUCKETS))
-		kmem_buckets_cache = kmem_cache_create("kmalloc_buckets",
-						       sizeof(kmem_buckets),
-						       0, SLAB_NO_MERGE, NULL);
-}
+// 	if (IS_ENABLED(CONFIG_SLAB_BUCKETS))
+// 		kmem_buckets_cache = kmem_cache_create("kmalloc_buckets",
+// 						       sizeof(kmem_buckets),
+// 						       0, SLAB_NO_MERGE, NULL);
+// }
 
 /**
  * __ksize -- Report full size of underlying allocation

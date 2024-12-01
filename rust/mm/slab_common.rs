@@ -720,6 +720,7 @@ pub extern "C" fn calculate_alignment(flags: slab_flags_t,
     pub fn config_dma_bounce_unaligned_link() -> u32;
     pub fn arch_slab_minalign_link() -> u32;
     pub fn mem_cgroup_kmem_disabled_link() -> bool;
+    pub fn get_random_u64() -> u64;
 
     // TODO: Remove these later
 }
@@ -1593,44 +1594,56 @@ pub extern "C" fn setup_kmalloc_cache_index_table(_: c_void)
         unsafe {*kmalloc_caches.get_unchecked_mut(t as usize).get_unchecked_mut(aligned_idx as usize) = kmalloc_caches[t as usize][aligned_idx as usize];}
     }
  }
-/*
+
  /*
   * Create the kmalloc array. Some of the regular kmalloc arrays
   * may already have been created because they were needed to
   * enable allocations for slab creation.
   */
- void __init create_kmalloc_caches(void)
+#[no_mangle]
+pub extern "C" fn create_kmalloc_caches() 
  {
-     int i;
-     enum kmalloc_cache_type type;
+     let mut t: u32 = KMALLOC_NORMAL;
  
      /*
       * Including KMALLOC_CGROUP if CONFIG_MEMCG defined
       */
-     for (type = KMALLOC_NORMAL; type < NR_KMALLOC_TYPES; type++) {
+     while t < NR_KMALLOC_TYPES {
          /* Caches that are NOT of the two-to-the-power-of size. */
-         if (KMALLOC_MIN_SIZE <= 32)
-             new_kmalloc_cache(1, type);
-         if (KMALLOC_MIN_SIZE <= 64)
-             new_kmalloc_cache(2, type);
+         if KMALLOC_MIN_SIZE <= 32 {
+             new_kmalloc_cache(1, t);
+         }
+         if KMALLOC_MIN_SIZE <= 64 {
+             new_kmalloc_cache(2, t);
+         }
  
          /* Caches that are of the two-to-the-power-of size. */
-         for (i = KMALLOC_SHIFT_LOW; i <= KMALLOC_SHIFT_HIGH; i++)
-             new_kmalloc_cache(i, type);
+         let mut i: i32 = KMALLOC_SHIFT_LOW.try_into().unwrap();
+         while i <= KMALLOC_SHIFT_HIGH.try_into().unwrap() {
+             new_kmalloc_cache(i, t);
+             i += 1;
+        }
+
+        t += 1;
      }
- #ifdef CONFIG_RANDOM_KMALLOC_CACHES
-     random_kmalloc_seed = get_random_u64();
- #endif
+
+     let random_kmalloc_seed: u64;
+    if CONFIG_RANDOM_KMALLOC_CACHES {
+        random_kmalloc_seed = unsafe {get_random_u64()};
+    }
  
      /* Kmalloc array is now usable */
-     slab_state = UP;
+     unsafe {
+        slab_state = slab_state_t::UP;
+     }
  
-     if (IS_ENABLED(CONFIG_SLAB_BUCKETS))
-         kmem_buckets_cache = kmem_cache_create("kmalloc_buckets",
-                                sizeof(kmem_buckets),
-                                0, SLAB_NO_MERGE, NULL);
+     if (CONFIG_SLAB_BUCKETS) {
+         unsafe {kmem_buckets_cache = kmem_cache_create("kmalloc_buckets".as_ptr() as *const i8,
+                                core::mem::size_of::<bindings::kmem_buckets>() as u32,
+                                0, SLAB_NO_MERGE, core::ptr::null_mut());}
+     }
  }
- 
+ /*
  /**
   * __ksize -- Report full size of underlying allocation
   * @object: pointer to the object
